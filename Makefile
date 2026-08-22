@@ -94,5 +94,11 @@ eval: ## Run the retrieval eval suite and regenerate README numbers + charts
 sweep: ## Run the alpha sweep experiment (the headline chart)
 	$(PY) -m eval.sweep_alpha
 
+eval-gate: ## CI quality gate: fail if search quality regresses (small fixture, no external data)
+	$(PY) -m eval.ci_quality_gate
+
+eval-gate-baseline: ## Regenerate eval/ci_fixture/baseline.json - review the diff before committing
+	$(PY) -m eval.ci_quality_gate --write-baseline
+
 .PHONY: help install up wait down nuke logs ps psql dev migrate revision seed \
-        lint fmt typecheck test test-all check eval sweep
+        lint fmt typecheck test test-all check eval sweep eval-gate eval-gate-baseline

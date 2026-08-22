@@ -1,0 +1,15 @@
+{
+  "n_queries": 15,
+  "ndcg@10": 0.9611,
+  "ndcg@10_n": 15,
+  "recall@10": 1.0,
+  "recall@10_n": 15,
+  "recall@50": 1.0,
+  "recall@50_n": 15,
+  "precision@10": 0.18,
+  "precision@10_n": 15,
+  "mrr": 0.9667,
+  "mrr_n": 15,
+  "hit_rate@10": 1.0,
+  "hit_rate@10_n": 15
+}

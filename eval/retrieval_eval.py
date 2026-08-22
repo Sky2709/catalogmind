@@ -4,10 +4,13 @@ number.
 
 Three passes over the same 170 queries:
 
-1. **Shipped config** - `retrieve_top_k=50` (the current default), `rerank=None`, i.e.
-   exactly what a real search request gets today: dynamic alpha routing and the
-   identifier-query rerank skip (`app/retrieval/hybrid.py`) both apply. Reported as
-   "what production returns," not compared directly against rerank-off - see below.
+1. **Shipped config** - `app/config.py`'s current `retrieve_top_k` (10 as of Day 4;
+   printed live below, not hardcoded - this docstring said "50" long after the Day 4
+   sweep dropped the shipped default to 10, the same stale-label mistake already
+   caught once in `eval/report.py`), `rerank=None`, i.e. exactly what a real search
+   request gets today: dynamic alpha routing and the identifier-query rerank skip
+   (`app/retrieval/hybrid.py`) both apply. Reported as "what production returns,"
+   not compared directly against rerank-off - see below.
 2. **Rerank-off** - same queries, same dynamic alpha, `rerank=False`. `retrieve_top_k`
    is irrelevant to this pass: hybrid's own top-10 ordering doesn't change whether a
    shallower or deeper pool was fetched behind it, only reranking cares how deep the
@@ -56,6 +59,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from app.config import get_settings
 from app.retrieval.base import SearchFilters, SearchRequest
 from app.retrieval.hybrid import WeaviateHybridRetriever, get_retriever
 from app.retrieval.weaviate_client import dispose_shared_client
@@ -159,8 +163,9 @@ async def main() -> None:
     t0 = time.perf_counter()
     shipped = await _run_pass(rerank=None, match_pool_to_judgment_depth=False)
     shipped_report = _print_report(
-        "SHIPPED CONFIG (retrieve_top_k=50, dynamic alpha, identifier-aware rerank) "
-        "- what production returns today; NOT directly comparable to rerank-off, see module docstring",
+        f"SHIPPED CONFIG (retrieve_top_k={get_settings().retrieve_top_k}, dynamic alpha, "
+        "identifier-aware rerank) - what production returns today; NOT directly comparable "
+        "to rerank-off, see module docstring",
         shipped,
     )
     print(f"  ({time.perf_counter() - t0:.1f}s)")

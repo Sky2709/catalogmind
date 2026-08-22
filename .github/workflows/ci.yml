@@ -1,15 +1,18 @@
 # CI runs the exact same `make` targets a human runs locally (see CLAUDE.md's daily
 # commands) - deliberately, not a reimplementation of the same checks in YAML, so
-# local dev and CI can never quietly drift apart. Three jobs: a fast one that needs
+# local dev and CI can never quietly drift apart. Four jobs: a fast one that needs
 # no datastores (lint, typecheck, unit tests), a slower one that boots the real
 # stack for the integration suite - matching the project's own `make test` vs
-# `make test-all` split - and an independent, cluster-free Helm chart check
-# (`infra/helm/`) that only needs the `helm` binary, not a Python environment.
+# `make test-all` split - an independent, cluster-free Helm chart check
+# (`infra/helm/`) that only needs the `helm` binary, not a Python environment - and
+# an eval-quality gate that fails the build if search quality regresses.
 #
-# Deliberately NOT included yet: an eval-quality gate (nDCG/hallucination-rate
-# regression check). That needs a golden query set and a working search endpoint,
-# neither of which exist until Day 3/4 - see PROGRESS.md. Adding a gate with nothing
-# real to gate on would be decoration, not a differentiator.
+# The quality gate runs against a small, committed fixture catalog
+# (`eval/ci_fixture/`), not the real 170-query golden set: that set is anchored to
+# real Kaggle catalogs in `data/raw/` which are git-ignored (size/licensing) with
+# no scripted CI re-download - see `eval/ci_quality_gate.py`'s module docstring
+# for exactly what the fixture can and can't catch, and why that tradeoff was
+# made deliberately rather than skipping the gate entirely.
 name: CI
 
 on:
@@ -92,6 +95,41 @@ jobs:
 
       - name: Full test suite (unit + integration)
         run: make test-all
+
+      - name: Tear down datastores
+        if: always()
+        run: make down
+
+  eval-quality-gate:
+    name: Search quality gate (fixture catalog)
+    runs-on: ubuntu-latest
+    env:
+      ENVIRONMENT: ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Cache the local embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: huggingface-bge-small-en-v1.5
+
+      - name: Install dependencies
+        run: make install
+
+      - name: Start datastores
+        run: make up
+
+      - name: Apply database migrations
+        run: make migrate
+
+      - name: Run the search quality gate
+        run: make eval-gate
 
       - name: Tear down datastores
         if: always()

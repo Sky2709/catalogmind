@@ -1,0 +1,25 @@
+sku,title,description,price,brand,category,in_stock
+BOOT-WP-10,Trailhead Waterproof Hiking Boots,"Grippy sole, ankle support, sealed seams",129.00,Trailhead,Footwear,true
+BOOT-WP-11,Trailhead Waterproof Hiking Boots Wide Fit,"Wide fit version, ankle support, sealed seams",139.00,Trailhead,Footwear,true
+BOOT-TR-05,Summit Trail Running Boots,Lightweight trail boots for rocky terrain,99.00,Summit,Footwear,true
+SHOE-RUN-21,Pace Runner Road Running Shoes,"Breathable mesh, cushioned sole",89.00,Pace,Footwear,true
+SHOE-RUN-22,Pace Runner Trail Running Shoes,Grippy outsole for muddy trails,94.00,Pace,Footwear,true
+JCKT-RN-22,Trailhead Waterproof Rain Jacket,"Packable, sealed seams, hood",149.00,Trailhead,Outerwear,true
+JCKT-RN-23,Trailhead Waterproof Rain Jacket Womens,"Packable, fitted cut, hood",145.00,Trailhead,Outerwear,true
+JCKT-WM-14,Summit Insulated Winter Jacket,"Down-filled, windproof shell",199.00,Summit,Outerwear,true
+SHRT-CTN-M1,Acme Cotton Casual Shirt,"Soft cotton, regular fit",24.00,Acme,Apparel,true
+SHRT-FRM-B2,Acme Slim Fit Formal Shirt Blue,"Wrinkle-resistant, slim fit",34.00,Acme,Apparel,true
+SHRT-FRM-W3,Acme Slim Fit Formal Shirt White,"Wrinkle-resistant, slim fit",34.00,Acme,Apparel,true
+HDPH-BT-01,Acme Wireless Noise Cancelling Headphones,"Bluetooth, 30h battery, active noise cancelling",89.00,Acme,Electronics,true
+HDPH-BT-02,Acme Wireless Sport Earbuds,"Bluetooth, sweat resistant, 8h battery",49.00,Acme,Electronics,true
+WATC-SM-07,PulseFit Smartwatch Series 3,"Heart-rate tracking, GPS, 5-day battery",129.00,PulseFit,Electronics,true
+WATC-SM-08,PulseFit Smartwatch Series 3 Sport Band,"Heart-rate tracking, waterproof band",139.00,PulseFit,Electronics,true
+BTTL-SS-500,Acme Stainless Steel Water Bottle 500ml,"Vacuum insulated, keeps cold 24h",18.00,Acme,Outdoor,true
+BTTL-SS-750,Acme Stainless Steel Water Bottle 750ml,"Vacuum insulated, wide mouth",22.00,Acme,Outdoor,true
+BPCK-HK-30,Trailhead 30L Hiking Backpack,"Padded straps, hydration compatible",79.00,Trailhead,Outdoor,true
+BPCK-HK-45,Trailhead 45L Hiking Backpack,"Multi-day pack, rain cover included",109.00,Trailhead,Outdoor,true
+TENT-2P-01,Summit 2-Person Backpacking Tent,"Lightweight, 3-season",189.00,Summit,Outdoor,true
+GLOV-WP-12,Trailhead Waterproof Gloves,"Touchscreen compatible, insulated",29.00,Trailhead,Accessories,true
+SOCK-HK-3P,Trailhead Hiking Socks 3-Pack,"Moisture wicking, cushioned",19.00,Trailhead,Accessories,true
+SNGL-SUN-09,Acme Polarized Sunglasses,"UV400 protection, lightweight frame",39.00,Acme,Accessories,true
+UMBR-CP-04,Acme Compact Travel Umbrella,"Windproof frame, auto-open",15.00,Acme,Accessories,false

@@ -9,9 +9,9 @@ Claude updates it at the end of every work session. If you are ever confused, re
 
 | | |
 |---|---|
-| **Current day** | Day 6 🚧 IN PROGRESS. Generation-quality eval done (2026-08-21, 218 real chat scenarios, groundedness 0.982/answer-hit 0.941/refusal-correctness 0.958). **Unplanned, real-bug-driven scope addition (2026-08-22)**: manual live testing of `/ui/` found the chat agent confidently answering a superlative price question wrong (claimed nothing above ₹2,499; real answer ₹58,854) - not on the original 7-day plan, but a genuine correctness bug found by using the product, so fixed properly rather than deferred. Agent's tool surface expanded from 1 tool to 3 (`search_catalog` with real filters, new `get_catalog_stats`, new `get_product_detail`) plus a claim-verification layer - see "Agentic RAG expansion" below for the full account, including a second real live bug (a Bedrock 400 on turn 2+ from an SDK response type that doesn't survive LangGraph's checkpoint round-trip). **Second unplanned fix, same day**: product images turned out to never reach the chat UI at all - three separate drops (Myntra's `image_url` never mapped, `image_url` stripped from every chat citation regardless of catalog, no `<img>` in the UI at all) - see "Image pipeline fix" below. **Third, same day**: once images made the product cards richer, the redundancy of Claude *also* re-listing every result in prose became obvious - trimmed per the user's explicit choice, see "Trim redundant prose" below (which also live-surfaced a real, pre-existing SKU-digit-transposition case that the existing hallucination detector correctly caught). **Fourth, same day**: a correct refusal ("this catalog doesn't carry underwear") still showed 8 irrelevant product cards beneath it - fixed by reusing the eval harness's refusal detector in production for the first time, see "Suppress product cards on a refusal answer" below. **Fifth and largest, same day**: that same regex-based detector missed a second real refusal ("black tshirt for men") within one turn of shipping - user called out regex-guessing an LLM's free text as fundamentally wrong for a production agentic RAG system, asked for a full audit and a real fix for all of it. Retired every free-text correctness heuristic on the chat agent's *own generated output* (refusal detection, SKU-citation verification, stat-claim verification) in favour of a structured `[[NO_MATCH]]`/`[[SKU:X]]`/`[[STAT:N]]` marker protocol Claude declares explicitly - live-tested twice (a 6-call Bedrock smoke test, then all 7 real failing/edge queries through the actual chat graph) before and after implementation. See "Retired every free-text correctness heuristic" below for the full account, including a first hypothesis (a pure retrieval-score threshold) that real measurement disproved before it shipped. **Phase 2 of that same plan, same day**: measured the two remaining named lexical heuristics (`model_router.py`'s escalation logic, `has_superlative_language`) against real outcomes for the first time - the router measurement caught and fixed a real, separate semantic-cache bug (a write path with no `semantic_cache_enabled` guard) before it could give a false reading; the superlative-language measurement found and fixed 3 confirmed vocabulary gaps ("priciest," "average," "total number of") via an LLM-judge comparison, naming 2 more as accepted limitations rather than force a fix. See both Phase 2 entries below. **Sixth, same day**: manual `/ui/` transcript review (user-initiated, not a bug report) surfaced a real frontend leak - the `[[NO_MATCH]]` marker rendered as literal visible bracket text when Claude narrated before a tool call, because the display-strip regex only matched a leading marker and pre-tool-call narration pushed it out of position 0. Fixed by resetting the frontend's raw-text buffer on every `tool_call` event; the same transcript also reconfirmed the already-accepted `refuses()` backstop limitation live, named but left as-is per explicit instruction. See "`[[NO_MATCH]]` marker leaked as raw bracket text" below. **Seventh, same day**: per-merchant cost tracking and the Helm chart both landed, closing two of the three remaining Day 6 items (only the CI eval gate is still open). Planning this surfaced a third, unplanned finding - `app/routers/chat.py` accepted a client-supplied `conversation_id` with no tenant-scoping, a real cross-tenant chat-history leak via LangGraph's checkpointer - fixed the same session, ahead of the two originally-requested items. See "Cost tracking, Helm chart, and a real conversation-isolation leak" below for the full account. |
+| **Current day** | Day 6 ✅ DONE (all three remaining items closed 2026-08-22: per-merchant cost tracking, Helm chart, CI eval gate). Generation-quality eval done (2026-08-21, 218 real chat scenarios, groundedness 0.982/answer-hit 0.941/refusal-correctness 0.958). **Unplanned, real-bug-driven scope addition (2026-08-22)**: manual live testing of `/ui/` found the chat agent confidently answering a superlative price question wrong (claimed nothing above ₹2,499; real answer ₹58,854) - not on the original 7-day plan, but a genuine correctness bug found by using the product, so fixed properly rather than deferred. Agent's tool surface expanded from 1 tool to 3 (`search_catalog` with real filters, new `get_catalog_stats`, new `get_product_detail`) plus a claim-verification layer - see "Agentic RAG expansion" below for the full account, including a second real live bug (a Bedrock 400 on turn 2+ from an SDK response type that doesn't survive LangGraph's checkpoint round-trip). **Second unplanned fix, same day**: product images turned out to never reach the chat UI at all - three separate drops (Myntra's `image_url` never mapped, `image_url` stripped from every chat citation regardless of catalog, no `<img>` in the UI at all) - see "Image pipeline fix" below. **Third, same day**: once images made the product cards richer, the redundancy of Claude *also* re-listing every result in prose became obvious - trimmed per the user's explicit choice, see "Trim redundant prose" below (which also live-surfaced a real, pre-existing SKU-digit-transposition case that the existing hallucination detector correctly caught). **Fourth, same day**: a correct refusal ("this catalog doesn't carry underwear") still showed 8 irrelevant product cards beneath it - fixed by reusing the eval harness's refusal detector in production for the first time, see "Suppress product cards on a refusal answer" below. **Fifth and largest, same day**: that same regex-based detector missed a second real refusal ("black tshirt for men") within one turn of shipping - user called out regex-guessing an LLM's free text as fundamentally wrong for a production agentic RAG system, asked for a full audit and a real fix for all of it. Retired every free-text correctness heuristic on the chat agent's *own generated output* (refusal detection, SKU-citation verification, stat-claim verification) in favour of a structured `[[NO_MATCH]]`/`[[SKU:X]]`/`[[STAT:N]]` marker protocol Claude declares explicitly - live-tested twice (a 6-call Bedrock smoke test, then all 7 real failing/edge queries through the actual chat graph) before and after implementation. See "Retired every free-text correctness heuristic" below for the full account, including a first hypothesis (a pure retrieval-score threshold) that real measurement disproved before it shipped. **Phase 2 of that same plan, same day**: measured the two remaining named lexical heuristics (`model_router.py`'s escalation logic, `has_superlative_language`) against real outcomes for the first time - the router measurement caught and fixed a real, separate semantic-cache bug (a write path with no `semantic_cache_enabled` guard) before it could give a false reading; the superlative-language measurement found and fixed 3 confirmed vocabulary gaps ("priciest," "average," "total number of") via an LLM-judge comparison, naming 2 more as accepted limitations rather than force a fix. See both Phase 2 entries below. **Sixth, same day**: manual `/ui/` transcript review (user-initiated, not a bug report) surfaced a real frontend leak - the `[[NO_MATCH]]` marker rendered as literal visible bracket text when Claude narrated before a tool call, because the display-strip regex only matched a leading marker and pre-tool-call narration pushed it out of position 0. Fixed by resetting the frontend's raw-text buffer on every `tool_call` event; the same transcript also reconfirmed the already-accepted `refuses()` backstop limitation live, named but left as-is per explicit instruction. See "`[[NO_MATCH]]` marker leaked as raw bracket text" below. **Seventh, same day**: per-merchant cost tracking and the Helm chart both landed, closing two of the three remaining Day 6 items (only the CI eval gate is still open). Planning this surfaced a third, unplanned finding - `app/routers/chat.py` accepted a client-supplied `conversation_id` with no tenant-scoping, a real cross-tenant chat-history leak via LangGraph's checkpointer - fixed the same session, ahead of the two originally-requested items. See "Cost tracking, Helm chart, and a real conversation-isolation leak" below for the full account. **Eighth, same day, closing Day 6**: the repo was pushed to GitHub for the first time (`https://github.com/Sky2709/catalogmind`, public) - the very first real CI run failed on 9 pre-existing files that had never been through `ruff format`, fixed as its own commit. Built the CI eval gate against a small committed fixture catalog (`eval/ci_fixture/`, 24 products/15 queries) rather than the real 170-query set, a deliberate tradeoff the user chose after being shown that the real golden sets need Kaggle data CI can't access without new secrets - see "CI eval gate, and pushing the repo to GitHub for the first time" below. |
 | **Last verified** | 2026-08-22 |
-| **Tests passing** | **511** (457 unit + 54 integration, all real - 0 skipped, real stack + real `AWS_BEARER_TOKEN_BEDROCK`) |
+| **Tests passing** | **511** (457 unit + 54 integration, all real - 0 skipped, real stack + real `AWS_BEARER_TOKEN_BEDROCK`) — plus a fourth CI job (`eval-quality-gate`) that isn't a pytest count but gates every PR on search quality |
 | **Stack** | Running (weaviate · postgres · mongo · redis) — 3 demo merchants seeded |
 | **Blocked on you?** | No |
 
@@ -1605,9 +1605,62 @@ about a provider this codebase no longer uses.)*
          lexical backstop) - now observed live rather than only tested
          synthetically, not chased into another regex patch for the same
          reason that whole rework exists.
-- [ ] **CI eval gate** — a PR fails automatically if search quality drops
+- [x] **CI eval gate** — a PR fails automatically if search quality drops
 - [x] Per-merchant cost tracking
 - [x] Helm chart / k8s manifests
+
+### CI eval gate, and pushing the repo to GitHub for the first time (2026-08-22)
+
+**Repo pushed to GitHub for the first time this session** - `https://github.com/Sky2709/catalogmind`,
+public, `main` branch. Authenticated via `gh auth login`'s device-code flow (no
+`gh`/SSH key/credential helper existed on this machine before now - installed `gh`
+locally into `~/.local/bin`, no sudo). First push failed on `.github/workflows/ci.yml`
+with "refusing to allow an OAuth App to create or update workflow ... without
+`workflow` scope" - fixed with `gh auth refresh -h github.com -s workflow`, a second
+device-code authorization. **The very first real CI run failed** - not on anything
+from this session's own feature work, but on 9 pre-existing files that had never been
+run through `ruff format` before this repo had ever been pushed anywhere. Fixed as its
+own separate commit (formatting only, no behaviour change) rather than folded into
+feature work.
+
+**CI eval gate**: `app/config.py`'s `retrieve_top_k`/`app/retrieval/hybrid.py`'s
+identifier-skip/`app/retrieval/alpha_router.py`'s dynamic alpha are exactly the kind
+of thing that has silently regressed before in this project's own history (Day 4's
+notes: a reranking bug once collapsed overall nDCG@10 from ~0.93 to ~0.52; a regex
+gap once collapsed one query's nDCG@10 from 1.0 to 0.0158) - `eval/retrieval_eval.py`
+already measures this, but only against the real 170-query golden set, which needs
+the real Kaggle catalogs in `data/raw/` (git-ignored, no scripted CI re-download).
+**A real infrastructure gap, surfaced and resolved by asking rather than assuming**:
+the user chose a small, committed CI-only fixture over adding Kaggle API secrets to
+CI. Built `eval/ci_fixture/` - a 24-product synthetic catalog
+(`catalog.csv`) and 15 golden queries (`golden.py`, 5 identifier/5 attribute/5
+exploratory) - with every judgment grounded in a real `WeaviateHybridRetriever.search()`
+call against the fixture once ingested (verified 2026-08-22 by actually running it,
+not guessed from reading the catalog - same discipline the real golden sets use).
+`eval/ci_quality_gate.py` provisions a fixed tenant fresh on every run (delete-then-
+recreate, not idempotent reuse - a small fixture is cheap enough to re-ingest that
+determinism matters more than speed here), runs the same production "shipped config"
+search path `eval/retrieval_eval.py`'s pass 1 measures, and compares overall
+nDCG@10/recall@10/MRR against a committed baseline (`eval/ci_fixture/baseline.json`,
+real numbers from a real run: nDCG@10=0.9611, recall@10=1.0, MRR=0.9667) with a 0.03
+absolute-drop tolerance - failing loudly (exit 1) on a real regression, confirmed by
+actually forcing one (temporarily inflating the baseline) and watching the gate catch
+it before restoring the real numbers. New `make eval-gate`/`make eval-gate-baseline`
+targets and a fourth, independent CI job (`eval-quality-gate` in `ci.yml`).
+**Explicitly named as a smoke test, not a replacement for the real eval**: 15 queries
+can't detect a subtle few-percent regression, only the dramatic kind this project's
+own history shows actually happens - stated directly in the script's own module
+docstring rather than implied to be more than it is.
+
+**A second, small, real bug found and fixed while touching this code**:
+`eval/retrieval_eval.py`'s "SHIPPED CONFIG" pass label had hardcoded
+`retrieve_top_k=50` in both its module docstring and its printed report header -
+stale since the Day 4 sweep dropped the shipped default to 10, the exact same
+"hardcoded config string" mistake `eval/report.py` was already fixed for once
+before. Fixed to read `get_settings().retrieve_top_k` live, same as `report.py`
+already does; left the docstring's other `retrieve_top_k=50` mention alone since
+that one is genuine historical narrative (describing what the comparison actually
+used at the time), not a claim about current config.
 
 ### Cost tracking, Helm chart, and a real conversation-isolation leak (2026-08-22)
 
@@ -1722,7 +1775,7 @@ done - which is what caught the password bug above.
 |---|---|---|
 | Any time | Run the keepalive after each Windows login | ongoing |
 | Before Day 5 (Bedrock) | Get a Bedrock long-term API key (Bedrock console → API keys), paste into `.env` as `AWS_BEARER_TOKEN_BEDROCK` | done (2026-08-21) |
-| Before Day 6 | Create an empty public GitHub repo named `catalogmind` | **not done** |
+| Before Day 6 | Create an empty public GitHub repo named `catalogmind` | done (2026-08-22) - `https://github.com/Sky2709/catalogmind` |
 | Day 2 | Kaggle account + API token, so real datasets can be downloaded | done |
 
 Nothing above is blocking today.
