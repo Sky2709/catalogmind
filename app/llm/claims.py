@@ -86,7 +86,11 @@ def find_stat_claim_mismatch(
         return None
 
     return any(
-        not any(abs(marker - value) / value <= _PRICE_TOLERANCE_FRACTION for value in known if value != 0)
+        not any(
+            abs(marker - value) / value <= _PRICE_TOLERANCE_FRACTION
+            for value in known
+            if value != 0
+        )
         for marker in markers
     )
 

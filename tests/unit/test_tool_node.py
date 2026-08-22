@@ -45,7 +45,9 @@ class FakeRetriever:
     def __init__(self) -> None:
         self.search = AsyncMock(return_value=SearchResponse(hits=[BOOT]))
         self.stats = AsyncMock(
-            return_value=CatalogStats(metric="price", count=3, minimum="100", maximum="500", mean="250")
+            return_value=CatalogStats(
+                metric="price", count=3, minimum="100", maximum="500", mean="250"
+            )
         )
         self.get_by_skus = AsyncMock(return_value=[BOOT])
         self.search_sorted = AsyncMock(return_value=[BOOT])
@@ -87,7 +89,9 @@ async def test_dispatches_get_catalog_stats(fake_retriever: FakeRetriever) -> No
 async def test_dispatches_get_product_detail(fake_retriever: FakeRetriever) -> None:
     state = _state(tool_use=_tool_use("get_product_detail", {"skus": ["BOOT-WP-10", "NOT-FOUND"]}))
     result = await tool_node(state)
-    fake_retriever.get_by_skus.assert_awaited_once_with("demo-fashion-in", ["BOOT-WP-10", "NOT-FOUND"])
+    fake_retriever.get_by_skus.assert_awaited_once_with(
+        "demo-fashion-in", ["BOOT-WP-10", "NOT-FOUND"]
+    )
     assert result["citations"] == [
         {
             "kind": "product",
@@ -131,8 +135,12 @@ async def test_citations_carry_image_url_but_tool_result_does_not(
     assert "boot.jpg" not in tool_result_text
 
 
-async def test_search_catalog_with_sort_by_uses_search_sorted(fake_retriever: FakeRetriever) -> None:
-    state = _state(tool_use=_tool_use("search_catalog", {"query": "watch", "sort_by": "price_desc"}))
+async def test_search_catalog_with_sort_by_uses_search_sorted(
+    fake_retriever: FakeRetriever,
+) -> None:
+    state = _state(
+        tool_use=_tool_use("search_catalog", {"query": "watch", "sort_by": "price_desc"})
+    )
     await tool_node(state)
     fake_retriever.search_sorted.assert_awaited_once()
     fake_retriever.search.assert_not_awaited()
@@ -175,9 +183,7 @@ async def test_stats_evidence_is_never_deduped_by_sku(fake_retriever: FakeRetrie
     """A stats entry has no SKU - a second get_catalog_stats call with different
     filters is genuinely different evidence, not a duplicate to drop."""
     existing = [{"kind": "stats", "filters": {}, "metric": "price", "count": 1}]
-    state = _state(
-        tool_use=_tool_use("get_catalog_stats", {"max_price": 500}), citations=existing
-    )
+    state = _state(tool_use=_tool_use("get_catalog_stats", {"max_price": 500}), citations=existing)
     result = await tool_node(state)
     assert len(result["citations"]) == 2
 

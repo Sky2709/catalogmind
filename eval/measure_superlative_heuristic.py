@@ -174,7 +174,9 @@ def _print_summary(rows: list[dict[str, Any]]) -> None:
     print(f"False negatives (heuristic MISSED a real stats need): {len(false_negatives)}")
     for r in false_negatives:
         print(f"    {r['message']!r} -> {r['judge_reason']}")
-    print(f"False positives (heuristic flagged unnecessarily, not dangerous): {len(false_positives)}")
+    print(
+        f"False positives (heuristic flagged unnecessarily, not dangerous): {len(false_positives)}"
+    )
     for r in false_positives:
         print(f"    {r['message']!r} -> {r['judge_reason']}")
 

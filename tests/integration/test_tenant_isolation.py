@@ -34,9 +34,7 @@ def _vector(seed: float) -> list[float]:
     return [seed] * DIM
 
 
-async def _insert(
-    tenant: str, sku: str, title: str, *, price: Decimal | None = None
-) -> None:
+async def _insert(tenant: str, sku: str, title: str, *, price: Decimal | None = None) -> None:
     async with wv.weaviate_client() as client:
         await wv.ensure_schema(client)
         collection = wv.product_collection(client, tenant)

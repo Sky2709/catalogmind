@@ -69,7 +69,12 @@ def test_metrics_endpoint_is_excluded_from_the_public_openapi_schema(
 
 @pytest.mark.parametrize(
     "claim_type",
-    ["hallucinated_citation", "stat_mismatch", "unverified_quantitative_refusal", "superlative_without_stats"],
+    [
+        "hallucinated_citation",
+        "stat_mismatch",
+        "unverified_quantitative_refusal",
+        "superlative_without_stats",
+    ],
 )
 def test_observe_claim_mismatch_increments_by_claim_type(claim_type: str) -> None:
     before = _counter_value(CHAT_CLAIM_MISMATCHES_TOTAL, claim_type=claim_type)

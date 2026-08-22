@@ -17,8 +17,22 @@ from app.llm.claims import (
     has_superlative_language,
 )
 
-PRICE_STATS = {"kind": "stats", "metric": "price", "count": 12, "minimum": "499", "maximum": "58854", "mean": "5200"}
-RATING_STATS = {"kind": "stats", "metric": "rating", "count": 12, "minimum": "2.0", "maximum": "4.8", "mean": "3.9"}
+PRICE_STATS = {
+    "kind": "stats",
+    "metric": "price",
+    "count": 12,
+    "minimum": "499",
+    "maximum": "58854",
+    "mean": "5200",
+}
+RATING_STATS = {
+    "kind": "stats",
+    "metric": "rating",
+    "count": 12,
+    "minimum": "2.0",
+    "maximum": "4.8",
+    "mean": "3.9",
+}
 
 
 def test_stat_claim_matches_the_real_maximum() -> None:
@@ -98,7 +112,7 @@ def test_superlative_language_synonyms_confirmed_by_a_real_llm_judge() -> None:
 
 
 def test_mean_alone_is_not_flagged_to_avoid_a_new_false_positive() -> None:
-    """"average" was added as a confirmed synonym; "mean" deliberately was not -
+    """ "average" was added as a confirmed synonym; "mean" deliberately was not -
     a bare `mean` would false-positive on ordinary usage that has nothing to do
     with a statistic."""
     assert not has_superlative_language("What do you mean by slim fit?")
