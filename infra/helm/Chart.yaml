@@ -1,0 +1,10 @@
+apiVersion: v2
+name: catalogmind
+description: >-
+  Multi-tenant conversational commerce API - full local/demo stack (API + Weaviate
+  + Postgres + Mongo + Redis), mirroring infra/docker-compose.yml for a
+  from-scratch `helm install` on kind/minikube. Not a production topology for the
+  stateful services - see templates/NOTES.txt.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

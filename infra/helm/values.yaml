@@ -1,0 +1,139 @@
+# Default values for the catalogmind chart.
+#
+# Component toggles mirror infra/docker-compose.yml's profiles as booleans instead
+# of CLI flags: default compose = the four datastores only; `--profile app` = +api;
+# `--profile offload` = +minio. Here, everything defaults on except minio, which
+# matches compose's own "only with --profile offload" default.
+
+api:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: catalogmind
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    port: 8000
+  resources:
+    # Embedding + reranking run in-process on CPU (app/ingestion/embed.py,
+    # app/retrieval/rerank.py, warmed up at startup) - this is not a trivial
+    # web-server footprint.
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercent: 70
+    # RERANK_CONCURRENCY_LIMIT=1 / INGESTION_CONCURRENCY_LIMIT=2
+    # (app/retrieval/rerank.py, app/ingestion/pipeline.py) are per-process
+    # semaphores - a documented, not-yet-closed gap. Horizontal scaling adds
+    # capacity across pods; it does not remove the per-pod serialization.
+
+  # Plain config - safe for a ConfigMap. Matches app/config.py's Settings fields.
+  config:
+    environment: prod
+    logLevel: INFO
+    awsRegion: us-east-1
+    modelReasoning: anthropic.claude-sonnet-5
+    modelFast: anthropic.claude-haiku-4-5
+    weaviatePort: 8080
+    weaviateGrpcPort: 50051
+    mongoDb: catalogmind
+    embeddingModel: BAAI/bge-small-en-v1.5
+    embeddingDim: 384
+    rerankerModel: BAAI/bge-reranker-base
+    defaultAlpha: "0.5"
+    dynamicAlphaEnabled: "true"
+    rerankEnabled: "true"
+    retrieveTopK: "10"
+    rerankTopK: "10"
+    semanticCacheEnabled: "true"
+    semanticCacheThreshold: "0.95"
+
+  # Secrets - must be overridden for anything beyond a local/demo install.
+  # ADMIN_TOKEN and AWS_BEARER_TOKEN_BEDROCK have no safe default; leaving them
+  # blank fails app/config.py's validate_production() at boot, which is the
+  # correct behaviour, not a bug to work around here.
+  secrets:
+    adminToken: ""
+    bedrockApiKey: ""
+
+  ingress:
+    enabled: false
+    host: catalogmind.local
+    className: ""
+
+serviceMonitor:
+  # prometheus-operator CRD - only takes effect if the CRD is actually installed
+  # (gated in the template on .Capabilities.APIVersions too), scraping the
+  # already-unauthenticated /metrics (app/routers/metrics.py).
+  enabled: false
+  interval: 30s
+
+weaviate:
+  enabled: true
+  image: semitechnologies/weaviate:1.38.10
+  # Fixed at 1, not a knob: CLUSTER_HOSTNAME=node1 / RAFT_JOIN=node1 /
+  # RAFT_BOOTSTRAP_EXPECT=1 (below) only work for exactly one node. Exposing a
+  # replicas value here would invite a values override that silently breaks raft
+  # the same way Day 0's original gotcha did.
+  persistence:
+    size: 5Gi
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+postgres:
+  enabled: true
+  image: postgres:17-alpine
+  database: catalogmind
+  user: catalogmind
+  # Leave blank to auto-generate on first install and keep stable across
+  # upgrades (see _helpers.tpl's catalogmind.postgresPassword). Set explicitly
+  # only if you need a known password.
+  password: ""
+  persistence:
+    size: 2Gi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+mongo:
+  enabled: true
+  image: mongo:8
+  persistence:
+    size: 2Gi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+redis:
+  enabled: true
+  image: redis:7-alpine
+  persistence:
+    size: 1Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+minio:
+  # Only needed for Weaviate's OFFLOADED tenant state - off by default, matching
+  # compose's `--profile offload` (opt-in, not part of the default stack).
+  enabled: false
+  image: minio/minio:latest
+  rootUser: minioadmin
+  rootPassword: minioadmin
+  persistence:
+    size: 5Gi

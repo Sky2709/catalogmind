@@ -1,0 +1,68 @@
+{
+  "name": "CatalogMind",
+
+  // Python 3.12 to match pyproject's pin. Debian base keeps the image close to the
+  // production Dockerfile (python:3.12-slim), so "works in dev" tracks "works in prod".
+  "image": "mcr.microsoft.com/devcontainers/python:3.12-bookworm",
+
+  "features": {
+    // The whole point of this container: a Docker daemon we control, which the
+    // corporate endpoint agent on the Windows host blocks.
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "version": "latest",
+      "moby": true
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+
+  // 2 cores burns 2 of the 120 free core-hours per wall-clock hour, so ~60h/month.
+  // Bump to 4 only for the embedding pass and the alpha sweep, then drop back.
+  "hostRequirements": {
+    "cpus": 2,
+    "memory": "8gb",
+    "storage": "32gb"
+  },
+
+  "forwardPorts": [8000, 8080, 50051, 5433, 6380, 27017],
+  "portsAttributes": {
+    "8000": { "label": "CatalogMind API (Swagger at /docs)", "onAutoForward": "notify" },
+    "8080": { "label": "Weaviate REST", "onAutoForward": "silent" },
+    "50051": { "label": "Weaviate gRPC", "onAutoForward": "silent" },
+    "5433": { "label": "Postgres", "onAutoForward": "silent" },
+    "6380": { "label": "Redis", "onAutoForward": "silent" },
+    "27017": { "label": "MongoDB", "onAutoForward": "silent" }
+  },
+
+  "onCreateCommand": "bash .devcontainer/setup.sh",
+
+  // Deliberately NOT starting the stack automatically. Codespaces bills by wall-clock
+  // uptime; four idle containers cost core-hours for nothing. Run `make up` when needed.
+  "postAttachCommand": "echo 'Ready. Run: make up && make migrate && make dev'",
+
+  "remoteEnv": {
+    "UV_LINK_MODE": "copy",
+    "PYTHONUNBUFFERED": "1"
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "charliermarsh.ruff",
+        "ms-python.mypy-type-checker",
+        "ms-azuretools.vscode-docker",
+        "tamasfe.even-better-toml"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/workspaces/catalogmind/.venv/bin/python",
+        "python.testing.pytestEnabled": true,
+        "editor.formatOnSave": true,
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff"
+        }
+      }
+    }
+  },
+
+  "remoteUser": "vscode"
+}

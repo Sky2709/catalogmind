@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>CatalogMind — chat</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    max-width: 720px; margin: 2rem auto; padding: 0 1rem;
+    background: #fafafa; color: #1a1a1a;
+  }
+  h1 { font-size: 1.1rem; color: #555; }
+  #setup {
+    display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap;
+  }
+  #setup input {
+    flex: 1; min-width: 160px; padding: 0.4rem; border: 1px solid #ccc; border-radius: 4px;
+  }
+  #log { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1rem; }
+  .msg { padding: 0.6rem 0.9rem; border-radius: 10px; max-width: 85%; white-space: pre-wrap; }
+  .msg.user { background: #d6e8ff; align-self: flex-end; }
+  .msg.assistant { background: #fff; border: 1px solid #e0e0e0; align-self: flex-start; }
+  .status { font-size: 0.85rem; color: #888; font-style: italic; }
+  .products { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
+  .product {
+    border: 1px solid #ddd; border-radius: 8px; padding: 0.5rem 0.7rem; font-size: 0.85rem;
+    background: #f5f5f5; min-width: 140px;
+  }
+  .product .sku { font-weight: 600; }
+  .product .oos { color: #b00; }
+  .product .thumb {
+    display: block; width: 100%; max-width: 160px; height: 120px; object-fit: cover;
+    border-radius: 6px; margin-bottom: 0.4rem; background: #eee;
+  }
+  form { display: flex; gap: 0.5rem; }
+  form input { flex: 1; padding: 0.6rem; border: 1px solid #ccc; border-radius: 4px; }
+  form button { padding: 0.6rem 1rem; border: none; border-radius: 4px; background: #2563eb; color: #fff; cursor: pointer; }
+  form button:disabled { background: #999; cursor: not-allowed; }
+  .cache-badge { font-size: 0.7rem; color: #0a8; margin-left: 0.4rem; }
+  .error { color: #b00; }
+</style>
+</head>
+<body>
+  <h1>CatalogMind — grounded chat (SSE demo, not the primary interface — see Swagger at /docs)</h1>
+  <div id="setup">
+    <input id="tenant" placeholder="merchant tenant slug (e.g. demo-fashion-in)" />
+    <input id="apiKey" placeholder="X-API-Key" type="password" />
+  </div>
+  <div id="log"></div>
+  <form id="form">
+    <input id="message" placeholder="Ask about a product..." autocomplete="off" required />
+    <button id="send" type="submit">Send</button>
+  </form>
+
+<script>
+const log = document.getElementById("log");
+const form = document.getElementById("form");
+const messageInput = document.getElementById("message");
+const sendButton = document.getElementById("send");
+const tenantInput = document.getElementById("tenant");
+const apiKeyInput = document.getElementById("apiKey");
+
+// Convenience only - not meant for anything beyond a local demo.
+tenantInput.value = localStorage.getItem("cm_tenant") || "";
+apiKeyInput.value = localStorage.getItem("cm_api_key") || "";
+let conversationId = null;
+
+function addMessage(role, text) {
+  const el = document.createElement("div");
+  el.className = "msg " + role;
+  el.textContent = text;
+  log.appendChild(el);
+  el.scrollIntoView({ behavior: "smooth" });
+  return el;
+}
+
+// A dedicated child <span> for the streamed answer text, kept separate from the
+// product cards appended later - a real bug caught by testing against a cache-hit
+// response (where `citations` arrives before any `token` event): appending text
+// via `el.textContent += ...` reassigns *all* of an element's children, silently
+// deleting any product cards already appended as siblings. Targeting a span that
+// only ever holds text avoids the whole class of bug rather than just this instance
+// of it.
+function addAssistantMessage() {
+  const el = document.createElement("div");
+  el.className = "msg assistant";
+  const textSpan = document.createElement("span");
+  el.appendChild(textSpan);
+  log.appendChild(el);
+  el.scrollIntoView({ behavior: "smooth" });
+  return { el, textSpan };
+}
+
+// Product fields (title, brand, image_url, ...) come from a merchant's own catalog
+// feed, not from this app - never trust them enough to interpolate raw into
+// innerHTML. escapeHtml covers text nodes; isSafeImageUrl additionally guards the
+// one attribute value we build (`<img src>`), where an unescaped quote could break
+// out of the attribute regardless of entity-escaping the rest of the string.
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+
+function isSafeImageUrl(url) {
+  return typeof url === "string" && /^https?:\/\//i.test(url);
+}
+
+// Claude declares relevance/citations via fixed markers instead of free prose
+// (see `app/llm/markers.py`) - `[[NO_MATCH]]` as a leading refusal signal,
+// `[[SKU:X]]`/`[[STAT:N]]` wrapping a cited product/figure. The customer should
+// never see the raw bracket syntax; this collapses it to plain text for display
+// only - server-side verification (`app/llm/graph.py::validate_and_store`) reads
+// the real, unmodified answer text separately. Re-applied to the FULL
+// accumulated answer on every chunk (cheap at chat-message length) rather than
+// transformed chunk-by-chunk, since a marker can span more than one streamed
+// chunk - one still "in flight" (not yet closed) is simply left as raw bracket
+// text for that one render until the closing `]]` arrives, then resolves clean
+// on the next chunk.
+function displayTextFor(rawAnswer) {
+  return rawAnswer
+    .replace(/^\s*\[\[NO_MATCH\]\]\s*/, "")
+    .replace(/\[\[SKU:([^[\]]+)\]\]/g, "$1")
+    .replace(/\[\[STAT:(-?\d+(?:\.\d+)?)\]\]/g, "$1");
+}
+
+function renderProducts(container, products, cached) {
+  // A refusal turn sends an empty `products` list on purpose (see
+  // `app/llm/graph.py::validate_and_store`) - nothing to show, so skip
+  // appending an empty card row rather than leaving a stray gap in the layout.
+  if (products.length === 0 && !cached) return;
+  const wrap = document.createElement("div");
+  wrap.className = "products";
+  for (const p of products) {
+    const card = document.createElement("div");
+    card.className = "product";
+    const stock = p.in_stock === "False" || p.in_stock === false ? '<span class="oos">out of stock</span>' : "in stock";
+    // A dead or missing image is expected (not every catalog has one, e.g. the
+    // demo home-goods feed has no image column at all) - drop the element on
+    // load failure rather than showing a broken-image icon.
+    const img = isSafeImageUrl(p.image_url)
+      ? `<img class="thumb" src="${escapeHtml(p.image_url)}" alt="${escapeHtml(p.title || "")}" loading="lazy" onerror="this.remove()" />`
+      : "";
+    card.innerHTML =
+      img +
+      `<div class="sku">${escapeHtml(p.sku)}</div>${escapeHtml(p.title || "")}<br/>` +
+      `${p.price ? escapeHtml(p.price) + " " + escapeHtml(p.currency || "") : ""}<br/>${stock}`;
+    wrap.appendChild(card);
+  }
+  if (cached) {
+    const badge = document.createElement("span");
+    badge.className = "cache-badge";
+    badge.textContent = "⚡ served from cache";
+    wrap.appendChild(badge);
+  }
+  container.appendChild(wrap);
+}
+
+// The browser's native EventSource only supports GET with no custom headers, so a
+// POST + X-API-Key endpoint has to be consumed by hand: read the fetch body as a
+// stream and split on the blank-line SSE event delimiter ourselves.
+async function streamChat(message) {
+  const response = await fetch(
+    `/v1/merchants/${encodeURIComponent(tenantInput.value)}/chat`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-API-Key": apiKeyInput.value },
+      body: JSON.stringify({ message, conversation_id: conversationId }),
+    }
+  );
+  if (!response.ok) {
+    addMessage("assistant error", `Request failed: HTTP ${response.status}`);
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let statusEl = null;
+  let answer = null; // { el, textSpan }, created lazily on the first token/citations event
+  let rawAnswer = ""; // the real, unmodified text (markers included) - textSpan shows the display transform
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    // sse-starlette's default line separator is "\r\n" (not "\n"), so events are
+    // terminated by "\r\n\r\n" - normalize before splitting or the blank-line
+    // delimiter never matches and no event is ever parsed.
+    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+
+    let sepIndex;
+    while ((sepIndex = buffer.indexOf("\n\n")) !== -1) {
+      const rawEvent = buffer.slice(0, sepIndex);
+      buffer = buffer.slice(sepIndex + 2);
+
+      let eventName = "message";
+      let data = "";
+      for (const line of rawEvent.split("\n")) {
+        if (line.startsWith("event:")) eventName = line.slice(6).trim();
+        else if (line.startsWith("data:")) data += line.slice(5).trim();
+      }
+      if (!data) continue;
+      let payload;
+      try {
+        payload = JSON.parse(data);
+      } catch (err) {
+        console.error("SSE payload JSON.parse failed", { eventName, data, err });
+        continue;
+      }
+      console.log("SSE event", eventName, payload);
+
+      if (eventName === "conversation") {
+        conversationId = payload.conversation_id;
+      } else if (eventName === "tool_call") {
+        // `payload.input` replaced a `payload.query`-only shape once the agent
+        // gained tools with no `query` field at all (get_catalog_stats,
+        // get_product_detail) - status text is keyed off `payload.tool`, not
+        // assumed to be a text search every time.
+        const toolInput = payload.input || {};
+        let statusText;
+        if (payload.tool === "get_catalog_stats") {
+          statusText = "📊 Checking catalog stats...";
+        } else if (payload.tool === "get_product_detail") {
+          const skus = (toolInput.skus || []).join(", ");
+          statusText = `🔎 Looking up ${skus || "product"}...`;
+        } else {
+          statusText = `🔍 Searching catalog for "${toolInput.query || ""}"...`;
+        }
+        statusEl = addMessage("status", statusText);
+        // Real bug, live-observed (2026-08-22): Claude often narrates before
+        // calling a tool ("I'll search for iPhone 17 phone covers in the
+        // catalog.") in the same answer bubble as its eventual real answer.
+        // `displayTextFor` only strips a *leading* [[NO_MATCH]] - with that
+        // narration text still sitting in `rawAnswer`, the marker in the next
+        // segment is no longer at position 0, the strip regex doesn't match,
+        // and the raw "[[NO_MATCH]]" bracket text leaked straight into the
+        // chat bubble. Any text streamed before a tool call is disposable
+        // status chatter, already conveyed by the status line above - reset
+        // the buffer so the *next* segment's own marker is genuinely leading.
+        rawAnswer = "";
+      } else if (eventName === "token") {
+        if (statusEl) { statusEl.remove(); statusEl = null; }
+        if (!answer) answer = addAssistantMessage();
+        rawAnswer += payload.text;
+        answer.textSpan.textContent = displayTextFor(rawAnswer);
+      } else if (eventName === "citations") {
+        if (statusEl) { statusEl.remove(); statusEl = null; }
+        if (!answer) answer = addAssistantMessage();
+        renderProducts(answer.el, payload.products, payload.cached);
+      } else if (eventName === "error") {
+        addMessage("assistant error", `Error: ${payload.message}`);
+      }
+    }
+  }
+}
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const message = messageInput.value.trim();
+  if (!message) return;
+  localStorage.setItem("cm_tenant", tenantInput.value);
+  localStorage.setItem("cm_api_key", apiKeyInput.value);
+
+  addMessage("user", message);
+  messageInput.value = "";
+  sendButton.disabled = true;
+  try {
+    await streamChat(message);
+  } catch (err) {
+    addMessage("assistant error", `Error: ${err}`);
+  } finally {
+    sendButton.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

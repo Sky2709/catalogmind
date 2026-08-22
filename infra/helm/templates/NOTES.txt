@@ -1,0 +1,41 @@
+CatalogMind installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+{{- if .Values.api.enabled }}
+
+API:
+  kubectl port-forward svc/{{ include "catalogmind.fullname" . }}-api {{ .Values.api.service.port }}:{{ .Values.api.service.port }} -n {{ .Release.Namespace }}
+  open http://localhost:{{ .Values.api.service.port }}/docs
+
+  {{- if not .Values.api.secrets.adminToken }}
+
+  WARNING: api.secrets.adminToken is empty. app/config.py's validate_production()
+  refuses to boot in the "prod" environment without a real admin token - set
+  --set api.secrets.adminToken=... (or a values file) before installing against
+  anything but a throwaway local cluster.
+  {{- end }}
+  {{- if not .Values.api.secrets.bedrockApiKey }}
+
+  WARNING: api.secrets.bedrockApiKey is empty - the same validate_production()
+  check also requires a real AWS_BEARER_TOKEN_BEDROCK in "prod". The chat and
+  usage endpoints will fail without one.
+  {{- end }}
+{{- end }}
+
+SCOPE NOTE: this chart hand-rolls StatefulSets for Weaviate/Postgres/Mongo/Redis
+so that `helm install` reproduces the entire stack from nothing on a local
+cluster (kind/minikube) - matching infra/docker-compose.yml's default stack, not
+a claim that this is how these datastores should run in production. A real
+deployment would point postgres/mongo/redis at managed services, and either
+keep Weaviate self-hosted (one of the few genuinely stateful things here worth
+it) or adopt an existing community chart for it.
+
+Weaviate is fixed at 1 replica - its single-node raft bootstrap
+(CLUSTER_HOSTNAME=node1 / RAFT_JOIN=node1 / RAFT_BOOTSTRAP_EXPECT=1) does not
+support more, the same constraint infra/docker-compose.yml already documents.
+
+api.autoscaling scales pod *count*, not per-pod concurrency: reranking
+(app/retrieval/rerank.py) and ingestion (app/ingestion/pipeline.py) each cap
+concurrent work with a **per-process** semaphore (RERANK_CONCURRENCY_LIMIT=1,
+INGESTION_CONCURRENCY_LIMIT=2) - a documented, not-yet-closed gap. More pods
+add more capacity in aggregate; each pod still serializes its own reranking
+internally.

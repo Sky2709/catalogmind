@@ -1,0 +1,159 @@
+# CatalogMind local stack.
+#
+#   docker compose -f infra/docker-compose.yml up -d
+#       -> 4 datastores only. Run the API on the host with `make dev` (fast reload).
+#
+#   docker compose -f infra/docker-compose.yml --profile app up -d --build
+#       -> also builds and runs the API container. This is what CI uses.
+#
+#   docker compose -f infra/docker-compose.yml --profile offload up -d
+#       -> adds MinIO, required for Weaviate tenant OFFLOADED state.
+
+name: catalogmind
+
+services:
+  weaviate:
+    image: semitechnologies/weaviate:1.38.10
+    restart: unless-stopped
+    command:
+      - --host=0.0.0.0
+      - --port=8080
+      - --scheme=http
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    environment:
+      PERSISTENCE_DATA_PATH: /var/lib/weaviate
+      QUERY_DEFAULTS_LIMIT: 25
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      # We supply our own vectors (local BGE). Weaviate must not try to embed.
+      DEFAULT_VECTORIZER_MODULE: none
+      ENABLE_API_BASED_MODULES: "false"
+      DISABLE_TELEMETRY: "true"
+      # --- single-node raft ---
+      # Weaviate 1.25+ runs its schema through raft even with one node. Without an
+      # explicit bootstrap it enters follower state and loops "attempting to join"
+      # against itself forever; the HTTP API never opens because raft never settles.
+      # Observed exactly that before these three were set.
+      CLUSTER_HOSTNAME: node1
+      RAFT_JOIN: node1
+      RAFT_BOOTSTRAP_EXPECT: 1
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    # No healthcheck, deliberately.
+    #
+    # This image is distroless: no sh, curl, wget or nc, so every CMD/CMD-SHELL probe
+    # is impossible. The first attempt here was ["CMD", "/bin/weaviate", "--help"],
+    # which "passed" for a container whose API was completely dead - it only proved
+    # the binary existed. A healthcheck that cannot fail is worse than none, because
+    # `depends_on: service_healthy` then gates on a lie.
+    #
+    # Readiness is asserted where it can be done honestly instead: `make up` polls
+    # /v1/.well-known/ready from the host, and the app's own /health/ready probes it.
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    ports:
+      - "5433:5432"   # host 5433: native Postgres already owns 5432
+    environment:
+      POSTGRES_USER: catalogmind
+      POSTGRES_PASSWORD: catalogmind
+      POSTGRES_DB: catalogmind
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U catalogmind -d catalogmind"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  mongo:
+    image: mongo:8
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6380:6379"   # host 6380: native Redis already owns 6379
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  # ---- optional: only with `--profile app` (CI, or full-container demo) ----
+  api:
+    profiles: ["app"]
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../.env
+    environment:
+      WEAVIATE_HOST: weaviate
+      POSTGRES_DSN: postgresql+asyncpg://catalogmind:catalogmind@postgres:5432/catalogmind
+      MONGO_URI: mongodb://mongo:27017
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      weaviate:
+        # service_started, not service_healthy: this image has no healthcheck (see the
+        # weaviate service above). The API's own startup retries against /health/ready,
+        # which is the honest place to wait.
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # ---- optional: only with `--profile offload` ----
+  minio:
+    profiles: ["offload"]
+    image: minio/minio:latest
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: ["server", "/data", "--console-address", ":9001"]
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  weaviate_data:
+  postgres_data:
+  mongo_data:
+  redis_data:
+  minio_data:

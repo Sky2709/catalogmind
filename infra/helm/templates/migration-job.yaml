@@ -1,0 +1,47 @@
+{{- if and .Values.api.enabled .Values.postgres.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "catalogmind.fullname" . }}-migrate-{{ .Release.Revision }}
+  labels:
+    {{- include "catalogmind.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    # Runs before the API pods roll out on both a first install and every
+    # upgrade - a Job has no `depends_on`-equivalent, and Postgres's own
+    # StatefulSet readiness probe doesn't block *this* Job's start, which is
+    # what the initContainer below closes.
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "catalogmind.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z {{ include "catalogmind.fullname" . }}-postgres 5432; do
+                echo "waiting for postgres..."
+                sleep 2
+              done
+      containers:
+        - name: migrate
+          image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          command: ["python", "-m", "alembic", "upgrade", "head"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "catalogmind.fullname" . }}-api-config
+            - secretRef:
+                name: {{ include "catalogmind.fullname" . }}-api-secret
+{{- end }}

@@ -1,0 +1,31 @@
+{{- if .Values.api.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "catalogmind.fullname" . }}-api-config
+  labels:
+    {{- include "catalogmind.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+data:
+  # Plain config only - see app/config.py's Settings for the full field list and
+  # api-secret.yaml for the secret-bearing fields this deliberately excludes.
+  ENVIRONMENT: {{ .Values.api.config.environment | quote }}
+  LOG_LEVEL: {{ .Values.api.config.logLevel | quote }}
+  AWS_REGION: {{ .Values.api.config.awsRegion | quote }}
+  MODEL_REASONING: {{ .Values.api.config.modelReasoning | quote }}
+  MODEL_FAST: {{ .Values.api.config.modelFast | quote }}
+  WEAVIATE_HOST: {{ include "catalogmind.fullname" . }}-weaviate
+  WEAVIATE_PORT: {{ .Values.api.config.weaviatePort | quote }}
+  WEAVIATE_GRPC_PORT: {{ .Values.api.config.weaviateGrpcPort | quote }}
+  MONGO_DB: {{ .Values.api.config.mongoDb | quote }}
+  EMBEDDING_MODEL: {{ .Values.api.config.embeddingModel | quote }}
+  EMBEDDING_DIM: {{ .Values.api.config.embeddingDim | quote }}
+  RERANKER_MODEL: {{ .Values.api.config.rerankerModel | quote }}
+  DEFAULT_ALPHA: {{ .Values.api.config.defaultAlpha | quote }}
+  DYNAMIC_ALPHA_ENABLED: {{ .Values.api.config.dynamicAlphaEnabled | quote }}
+  RERANK_ENABLED: {{ .Values.api.config.rerankEnabled | quote }}
+  RETRIEVE_TOP_K: {{ .Values.api.config.retrieveTopK | quote }}
+  RERANK_TOP_K: {{ .Values.api.config.rerankTopK | quote }}
+  SEMANTIC_CACHE_ENABLED: {{ .Values.api.config.semanticCacheEnabled | quote }}
+  SEMANTIC_CACHE_THRESHOLD: {{ .Values.api.config.semanticCacheThreshold | quote }}
+{{- end }}

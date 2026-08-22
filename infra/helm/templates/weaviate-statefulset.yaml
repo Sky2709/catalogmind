@@ -1,0 +1,110 @@
+{{- if .Values.weaviate.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "catalogmind.fullname" . }}-weaviate
+  labels:
+    {{- include "catalogmind.labels" . | nindent 4 }}
+    app.kubernetes.io/component: weaviate
+spec:
+  clusterIP: None
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+    - name: grpc
+      port: 50051
+      targetPort: 50051
+  selector:
+    {{- include "catalogmind.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: weaviate
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "catalogmind.fullname" . }}-weaviate
+  labels:
+    {{- include "catalogmind.labels" . | nindent 4 }}
+    app.kubernetes.io/component: weaviate
+spec:
+  serviceName: {{ include "catalogmind.fullname" . }}-weaviate
+  # Hardcoded, not `.Values`-driven: CLUSTER_HOSTNAME=node1 / RAFT_JOIN=node1 /
+  # RAFT_BOOTSTRAP_EXPECT=1 below only work for exactly one node - see
+  # values.yaml's comment on `weaviate.persistence` for the full reasoning.
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "catalogmind.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: weaviate
+  template:
+    metadata:
+      labels:
+        {{- include "catalogmind.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: weaviate
+    spec:
+      containers:
+        - name: weaviate
+          image: {{ .Values.weaviate.image }}
+          args:
+            - --host=0.0.0.0
+            - --port=8080
+            - --scheme=http
+          env:
+            - name: PERSISTENCE_DATA_PATH
+              value: /var/lib/weaviate
+            - name: QUERY_DEFAULTS_LIMIT
+              value: "25"
+            - name: AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED
+              value: "true"
+            # We supply our own vectors (local BGE) - Weaviate must not try to embed.
+            - name: DEFAULT_VECTORIZER_MODULE
+              value: "none"
+            - name: ENABLE_API_BASED_MODULES
+              value: "false"
+            - name: DISABLE_TELEMETRY
+              value: "true"
+            # --- single-node raft, same as infra/docker-compose.yml ---
+            - name: CLUSTER_HOSTNAME
+              value: node1
+            - name: RAFT_JOIN
+              value: node1
+            - name: RAFT_BOOTSTRAP_EXPECT
+              value: "1"
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: grpc
+              containerPort: 50051
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/weaviate
+          # httpGet, not exec: the image is distroless (no sh/curl/wget/nc), so a
+          # CMD-shaped probe is impossible - the same reason compose ships with no
+          # container healthcheck at all and instead polls from the host
+          # (`make up`'s wait loop). Kubernetes' httpGet probe doesn't need a
+          # shell in the container, so this is real in-cluster readiness/liveness
+          # that compose's setup structurally couldn't have.
+          readinessProbe:
+            httpGet:
+              path: /v1/.well-known/ready
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /v1/.well-known/live
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.weaviate.resources | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.weaviate.persistence.size }}
+{{- end }}
