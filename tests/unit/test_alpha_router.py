@@ -7,6 +7,8 @@ every PR, before the (much slower) retrieval eval.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from app.retrieval.alpha_router import (
@@ -302,3 +304,44 @@ def test_corrupt_tuned_file_does_not_break_startup(tmp_path, monkeypatch) -> Non
     router = AlphaRouter(enabled=True)
     assert router.is_tuned is False
     assert router.alpha_by_class == PRIOR_ALPHA
+
+
+# --- reload-on-change: a live process must not need a restart to pick up ------
+# --- a re-run of `make sweep` ---------------------------------------------------
+
+
+def test_router_picks_up_a_resweep_without_rebuilding_the_instance(tmp_path, monkeypatch) -> None:
+    """The real, previously-unfixed gap this pins: `get_retriever()` caches one
+    `AlphaRouter` for the whole process lifetime, and the old code loaded
+    tuned alpha exactly once, at construction - re-running `make sweep` against
+    a live process (a real operational sequence: re-tuning after a catalog or
+    classifier change) left it silently serving stale values until the next
+    restart. `os.utime` forces a real mtime change rather than relying on
+    wall-clock timing between the two writes."""
+    path = tmp_path / "tuned_alpha.json"
+    path.write_text('{"alpha_by_class": {"identifier": 0.1}}')
+    os.utime(path, (1_000_000, 1_000_000))
+    monkeypatch.setattr("app.retrieval.alpha_router.TUNED_ALPHA_PATH", path)
+
+    router = AlphaRouter(enabled=True)  # the same instance throughout - never rebuilt
+    alpha, _ = router.resolve("DW-4402B")
+    assert alpha == 0.1
+
+    path.write_text('{"alpha_by_class": {"identifier": 0.42}}')
+    os.utime(path, (2_000_000, 2_000_000))
+    alpha, _ = router.resolve("DW-4402B")
+    assert alpha == 0.42
+
+
+def test_router_does_not_reload_when_the_file_is_unchanged(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "tuned_alpha.json"
+    path.write_text('{"alpha_by_class": {"identifier": 0.1}}')
+    os.utime(path, (1_000_000, 1_000_000))
+    monkeypatch.setattr("app.retrieval.alpha_router.TUNED_ALPHA_PATH", path)
+
+    router = AlphaRouter(enabled=True)
+    router.resolve("DW-4402B")
+    first_mapping = router.alpha_by_class
+    router.resolve("DW-4402B")
+    # Same object - proves the second `resolve()` didn't re-read/rebuild it.
+    assert router.alpha_by_class is first_mapping

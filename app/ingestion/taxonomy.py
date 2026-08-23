@@ -24,7 +24,6 @@ Reviewed and locked with the user, 2026-08-23 - see PROGRESS.md.
 from __future__ import annotations
 
 import json
-from functools import lru_cache
 from pathlib import Path
 
 SEPARATOR = " > "
@@ -152,7 +151,9 @@ def category_filter_values(tenant: str) -> tuple[str, ...] | None:
     return tuple(sorted(values))
 
 
-@lru_cache(maxsize=3)
+_enrichment_cache: dict[str, tuple[float, dict[str, str]]] = {}
+
+
 def load_enrichment_map(tenant: str) -> dict[str, str]:
     """`identity_key -> "Category > Subcategory"` from
     `scripts/enrich_categories.py`'s output for one tenant. The identity key
@@ -163,17 +164,39 @@ def load_enrichment_map(tenant: str) -> dict[str, str]:
     Returns an empty dict if the enrichment file doesn't exist yet, rather than
     raising - lets an adapter fall back to `UNCATEGORIZED` for a fresh clone
     that hasn't run the (paid, one-off) enrichment script, instead of crashing
-    ingestion entirely. Cached per-process (`lru_cache`, one entry per tenant):
-    this is read once per ingestion adapter construction, not per row, and the
-    file only ever changes by re-running the enrichment script by hand.
+    ingestion entirely.
+
+    Cached per-tenant, keyed on the file's own mtime rather than a plain
+    `lru_cache` - a real, two-part gap found in production: (1) a bare
+    `@lru_cache(maxsize=3)` here silently thrashes past exactly 3 live tenants
+    (this project's own three demo catalogs), reloading from disk on every
+    call once a 4th tenant is onboarded and evicts an older entry - "works" by
+    accident today only because there happen to be exactly three; (2) more
+    importantly, an `lru_cache` never notices the *file* changed - re-running
+    the enrichment script for an already-cached tenant left a live process
+    silently serving the pre-enrichment map until it happened to be evicted
+    or the process restarted. A `stat()` call is a few microseconds, utterly
+    negligible next to this function's real cost (this is read once per
+    ingestion-adapter construction, never per catalog row, so it is nowhere
+    near a hot path) - paying it buys both "serves fresh data automatically
+    when the file changes" and "scales to any number of tenants" for free,
+    with no cap to pick a number for at all.
     """
     path = ENRICHMENT_DIR / f"{tenant}.jsonl"
     if not path.exists():
+        _enrichment_cache.pop(tenant, None)
         return {}
+
+    mtime = path.stat().st_mtime
+    cached = _enrichment_cache.get(tenant)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+
     mapping: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         entry = json.loads(line)
         mapping.update(entry["classifications"])
+    _enrichment_cache[tenant] = (mtime, mapping)
     return mapping

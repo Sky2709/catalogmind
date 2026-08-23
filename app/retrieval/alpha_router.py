@@ -264,6 +264,15 @@ def classify(query: str) -> Classification:
 # --- tuned alpha loading -------------------------------------------------------
 
 
+def _tuned_alpha_mtime() -> float | None:
+    """`None` when the file doesn't exist (not yet swept) - distinct from any
+    real timestamp, including `0.0`."""
+    try:
+        return TUNED_ALPHA_PATH.stat().st_mtime
+    except FileNotFoundError:
+        return None
+
+
 def _load_tuned_alpha() -> tuple[dict[QueryClass, float], bool]:
     """Load measured alphas produced by `eval/sweep_alpha.py`.
 
@@ -289,12 +298,31 @@ def _load_tuned_alpha() -> tuple[dict[QueryClass, float], bool]:
 
 
 class AlphaRouter:
-    """Chooses the hybrid alpha for a query."""
+    """Chooses the hybrid alpha for a query.
+
+    `get_retriever()` (`app/retrieval/hybrid.py`) caches one `AlphaRouter`
+    instance for the whole process lifetime - a real, previously-unfixed gap:
+    the tuned alpha used to load exactly once, at that instance's
+    construction, so re-running `make sweep` against a live process (a real
+    operational sequence, not a hypothetical - re-tuning after a catalog or
+    classifier change) left it silently serving stale values until the next
+    restart. Fixed by checking the file's mtime on every `resolve()` call and
+    reloading only when it actually changed - a `stat()` is a few
+    microseconds against a call that already does a live Weaviate query plus
+    an embedding, so the cost is immaterial next to the correctness this buys.
+    """
 
     def __init__(self, enabled: bool = True, default_alpha: float = 0.5) -> None:
         self.enabled = enabled
         self.default_alpha = default_alpha
         self.alpha_by_class, self.is_tuned = _load_tuned_alpha()
+        self._loaded_mtime = _tuned_alpha_mtime()
+
+    def _reload_if_changed(self) -> None:
+        current_mtime = _tuned_alpha_mtime()
+        if current_mtime != self._loaded_mtime:
+            self.alpha_by_class, self.is_tuned = _load_tuned_alpha()
+            self._loaded_mtime = current_mtime
 
     def resolve(self, query: str, override: float | None = None) -> tuple[float, Classification]:
         """Return (alpha, classification).
@@ -310,4 +338,5 @@ class AlphaRouter:
             return override, classification
         if not self.enabled:
             return self.default_alpha, classification
+        self._reload_if_changed()
         return self.alpha_by_class[classification.query_class], classification
