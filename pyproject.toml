@@ -50,6 +50,14 @@ dev = [
     "matplotlib>=3.9",
     "rich>=13.9",
 ]
+# Deliberately NOT a core dependency, and deliberately NOT `anthropic`/Bedrock:
+# `scripts/enrich_categories.py` is a one-off, offline batch job, and the user
+# chose Gemini for it specifically to avoid spending AWS Bedrock quota - a
+# scoped, explicit, dated exception to CLAUDE.md's "no Gemini anywhere" rule,
+# not a reversal of it. See that script's module docstring and PROGRESS.md.
+enrichment = [
+    "google-genai>=1.0",
+]
 
 [build-system]
 requires = ["hatchling"]

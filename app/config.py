@@ -53,6 +53,22 @@ class Settings(BaseSettings):
     aws_region: str = "us-east-1"
     model_reasoning: str = "anthropic.claude-sonnet-5"
     model_fast: str = "anthropic.claude-haiku-4-5"
+
+    gemini_api_key: str = Field(
+        "",
+        validation_alias="GEMINI_API_KEY",
+        description=(
+            "Used by exactly one place: `scripts/enrich_categories.py`'s "
+            "`--provider gemini` path (default for that script) - a deliberate, "
+            "dated, scoped exception to CLAUDE.md's 'do not reintroduce Gemini "
+            "anywhere' rule, made 2026-08-23 at the user's explicit request "
+            "specifically to avoid spending AWS Bedrock quota on an offline, "
+            "one-off batch job. Never read by the live chat/search/ingestion "
+            "path - see PROGRESS.md for the full account. Empty by default; the "
+            "script fails loudly if this is unset rather than falling back to "
+            "Bedrock silently."
+        ),
+    )
     """Provider history, both changes deliberate and dated, not silent drift - see
     `PROGRESS.md`'s "Decisions already locked" section for the full reasoning each
     time:
