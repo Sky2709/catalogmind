@@ -1,13 +1,23 @@
-"""`MyntraFashionAdapter`'s `preprocess` hook - the one piece of real code behind
-Myntra's escalation from a plain `ColumnMapping` to a full adapter (see
-`app/ingestion/adapters/demo_catalogs.py`'s module docstring). Picking the wrong
-image out of a `"~"`-delimited blob, or crashing on a row that lacks one, is exactly
-the kind of thing that stays invisible until someone asks "why don't I see images."
+"""Adapters for the three demo catalogs (`app/ingestion/adapters/demo_catalogs.py`).
+
+Started as `MyntraFashionAdapter`-only coverage for its `preprocess` hook -
+picking the wrong image out of a `"~"`-delimited blob, or crashing on a row
+that lacks one, is exactly the kind of thing that stays invisible until
+someone asks "why don't I see images." Grew to cover all three adapters'
+category-enrichment wiring (`scripts/enrich_categories.py`'s offline
+classification, looked up by title or ASIN depending on the catalog) once
+that landed - see PROGRESS.md.
 """
 
 from __future__ import annotations
 
-from app.ingestion.adapters.demo_catalogs import MyntraFashionAdapter
+from app.ingestion.adapters import demo_catalogs
+from app.ingestion.adapters.demo_catalogs import (
+    AmazonElectronicsAdapter,
+    MyntraFashionAdapter,
+    SheinHomeGoodsAdapter,
+)
+from app.ingestion.taxonomy import UNCATEGORIZED
 from app.models.product import IngestionError, Product
 
 ROW = {
@@ -76,3 +86,109 @@ def test_row_with_no_sku_still_fails_like_before() -> None:
     row = {**ROW, "sku": "", "images": "http://a.jpg"}
     result = MyntraFashionAdapter().parse_row(row, row_number=7)
     assert isinstance(result, IngestionError)
+
+
+# --- category enrichment: fashion (looked up by title) ------------------------
+
+
+def test_fashion_category_comes_from_enrichment_lookup(monkeypatch) -> None:
+    monkeypatch.setattr(
+        demo_catalogs,
+        "load_enrichment_map",
+        lambda tenant: {"DKNY Unisex Black Trolley Bag": "Bags & Luggage > Luggage & Trolleys"},
+    )
+    product = _parse("http://a.jpg")
+    assert product.category_path == ["Bags & Luggage", "Luggage & Trolleys"]
+
+
+def test_fashion_category_falls_back_to_uncategorized_when_not_in_enrichment(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(demo_catalogs, "load_enrichment_map", lambda tenant: {})
+    product = _parse("http://a.jpg")
+    assert product.category_path == UNCATEGORIZED.split(" > ")
+
+
+# --- category enrichment: electronics (looked up by ASIN, not title) ----------
+
+ELECTRONICS_ROW = {
+    "name": "OnePlus Bullets Z2 Bluetooth Wireless in Ear Earphones",
+    "main_category": "tv, audio & cameras",
+    "sub_category": "All Electronics",
+    "link": "https://www.amazon.in/dp/B08DR5X5XR/ref=something",
+    "discount_price": "₹1,999",
+    "actual_price": "₹2,299",
+    "ratings": "4.2",
+    "no_of_ratings": "90,304",
+    "image": "http://img.jpg",
+}
+
+
+def test_electronics_category_looked_up_by_asin_not_title(monkeypatch) -> None:
+    monkeypatch.setattr(
+        demo_catalogs,
+        "load_enrichment_map",
+        lambda tenant: {
+            "B08DR5X5XR": "Audio > Headphones & Earbuds",
+            # A different key under the (truncated, unreliable) title text must
+            # never be consulted - electronics is deliberately keyed by ASIN.
+            ELECTRONICS_ROW["name"]: "Other > Uncategorized",
+        },
+    )
+    result = AmazonElectronicsAdapter().parse_row(ELECTRONICS_ROW, row_number=1)
+    assert isinstance(result, Product), result
+    assert result.category_path == ["Audio", "Headphones & Earbuds"]
+
+
+def test_electronics_category_falls_back_when_asin_not_in_enrichment(monkeypatch) -> None:
+    monkeypatch.setattr(demo_catalogs, "load_enrichment_map", lambda tenant: {})
+    result = AmazonElectronicsAdapter().parse_row(ELECTRONICS_ROW, row_number=1)
+    assert isinstance(result, Product), result
+    assert result.category_path == UNCATEGORIZED.split(" > ")
+
+
+# --- category enrichment: home-goods (must never affect the SKU digest) -------
+
+HOME_GOODS_ROW = {
+    "goods-title-link": "1pc Multifunctional 9-hole Hanger For Home Wardrobe",
+    "rank-sub": "in Closet Organizers",
+    "price": "$12.99",
+}
+
+
+def test_home_goods_category_comes_from_enrichment_lookup(monkeypatch) -> None:
+    monkeypatch.setattr(
+        demo_catalogs,
+        "load_enrichment_map",
+        lambda tenant: {
+            HOME_GOODS_ROW["goods-title-link"]: "Storage & Organization > Closet & Wardrobe"
+        },
+    )
+    result = SheinHomeGoodsAdapter(default_category="Home Goods").parse_row(
+        HOME_GOODS_ROW, row_number=1
+    )
+    assert isinstance(result, Product), result
+    assert result.category_path == ["Storage & Organization", "Closet & Wardrobe"]
+
+
+def test_home_goods_sku_is_unaffected_by_the_enrichment_lookup(monkeypatch) -> None:
+    """The real bug this pins: `_sku` is a hash of the `rank-sub`-derived
+    `_category` (shipped earlier to stop cross-category title collisions from
+    silently overwriting each other) - the *separate*, LLM-derived
+    `_display_category` used for search/filtering must never feed that hash,
+    or every home-goods SKU would change a second time depending on which
+    enrichment happened to be loaded when a row was ingested."""
+
+    def _sku_for(enrichment: dict[str, str]) -> str:
+        monkeypatch.setattr(demo_catalogs, "load_enrichment_map", lambda tenant: enrichment)
+        result = SheinHomeGoodsAdapter(default_category="Home Goods").parse_row(
+            HOME_GOODS_ROW, row_number=1
+        )
+        assert isinstance(result, Product), result
+        return result.sku
+
+    sku_with_no_enrichment = _sku_for({})
+    sku_with_enrichment = _sku_for(
+        {HOME_GOODS_ROW["goods-title-link"]: "Storage & Organization > Closet & Wardrobe"}
+    )
+    assert sku_with_no_enrichment == sku_with_enrichment
