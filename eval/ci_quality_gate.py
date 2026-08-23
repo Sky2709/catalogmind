@@ -43,6 +43,7 @@ import asyncio
 import csv
 import json
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 from sqlalchemy import delete, select
@@ -117,27 +118,49 @@ async def _provision_fixture_tenant() -> None:
             )
 
 
-async def _run_queries() -> dict[str, float | None]:
+async def _run_queries() -> dict[str, dict[str, float | None]]:
+    """Scores every fixture query, then aggregates twice: once overall (kept for
+    backward-compatible reporting) and once per `query_class`.
+
+    The per-class breakdown exists because the aggregate-only version of this gate
+    has a real, measured blind spot: a regression confined to one class (e.g. a
+    broken identifier-skip regex tanking every IDENTIFIER query) can net out to
+    ~zero movement in a macro average across all 15 fixture queries if the other two
+    classes happen to improve at the same time, passing a gate that should have
+    failed. Only 5 queries per class, so this is still a smoke test, not a
+    statistically powerful per-class test - but it turns an invisible offsetting
+    regression into a visible one, which an aggregate-only number structurally
+    cannot do.
+    """
     retriever = WeaviateHybridRetriever()
     scores = []
+    by_class: dict[str, list] = defaultdict(list)
     for query in QUERIES:
         request = SearchRequest(
             query=query.query, tenant=CI_TENANT, limit=10, filters=SearchFilters()
         )
         response = await retriever.search(request)
         ranking = [hit.sku for hit in response.hits]
-        scores.append(score_query(query.id, ranking, query.judgments))
-    return aggregate(scores)
+        result = score_query(query.id, ranking, query.judgments)
+        scores.append(result)
+        by_class[query.query_class.value].append(result)
+
+    report = {"overall": aggregate(scores)}
+    for query_class, class_scores in by_class.items():
+        report[query_class] = aggregate(class_scores)
+    return report
 
 
-def _print_report(label: str, report: dict[str, float | None]) -> None:
-    print(
-        f"{label:<10} n={report['n_queries']:>3}  "
-        f"nDCG@10={report['ndcg@10']:.4f}  "
-        f"recall@10={report['recall@10']:.4f}  "
-        f"MRR={report['mrr']:.4f}  "
-        f"hit_rate@10={report['hit_rate@10']:.4f}"
-    )
+def _print_report(label: str, report: dict[str, dict[str, float | None]]) -> None:
+    for key in sorted(report, key=lambda k: (k != "overall", k)):
+        r = report[key]
+        print(
+            f"{label:<10} {key:<12} n={r['n_queries']:>3}  "
+            f"nDCG@10={r['ndcg@10']:.4f}  "
+            f"recall@10={r['recall@10']:.4f}  "
+            f"MRR={r['mrr']:.4f}  "
+            f"hit_rate@10={r['hit_rate@10']:.4f}"
+        )
 
 
 async def main(write_baseline: bool) -> int:
@@ -160,19 +183,29 @@ async def main(write_baseline: bool) -> int:
     baseline = json.loads(BASELINE_PATH.read_text())
     _print_report("BASELINE", baseline)
 
+    # Gate on "overall" (backward-compatible headline number) AND every query_class
+    # bucket present in the baseline - see `_run_queries`'s docstring for why the
+    # per-class check exists. A class absent from either side is skipped, not
+    # failed: fixture composition changing class membership is a fixture-authoring
+    # concern, not a quality regression this gate should report as one.
     failures = []
-    for metric in TRACKED_METRICS:
-        current = report.get(metric)
-        expected = baseline.get(metric)
-        if current is None or expected is None:
-            failures.append(f"{metric}: missing value (current={current}, baseline={expected})")
-            continue
-        drop = expected - current
-        if drop > REGRESSION_TOLERANCE:
-            failures.append(
-                f"{metric}: {current:.4f} vs baseline {expected:.4f} "
-                f"(dropped {drop:.4f}, tolerance {REGRESSION_TOLERANCE})"
-            )
+    for key in sorted(set(baseline) & set(report)):
+        current_bucket = report[key]
+        baseline_bucket = baseline[key]
+        for metric in TRACKED_METRICS:
+            current = current_bucket.get(metric)
+            expected = baseline_bucket.get(metric)
+            if current is None or expected is None:
+                failures.append(
+                    f"{key}::{metric}: missing value (current={current}, baseline={expected})"
+                )
+                continue
+            drop = expected - current
+            if drop > REGRESSION_TOLERANCE:
+                failures.append(
+                    f"{key}::{metric}: {current:.4f} vs baseline {expected:.4f} "
+                    f"(dropped {drop:.4f}, tolerance {REGRESSION_TOLERANCE})"
+                )
 
     if failures:
         print("\nQUALITY GATE FAILED:")

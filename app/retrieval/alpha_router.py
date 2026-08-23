@@ -94,6 +94,37 @@ _EXPLORATORY_CUE = re.compile(
 
 _QUESTION_CUE = re.compile(r"^\s*(what|which|how|can|do|does|is|are|any)\b|\?\s*$", re.IGNORECASE)
 
+# Purpose/need framing: "way to X", "device to X", "solution for X", "protect X from
+# Y" - the shopper is describing a goal or problem, not naming a product category.
+# Caught the hard way: `eval/retrieval_eval.py`'s live classification (not the golden
+# label) decides the alpha actually measured, and 23 of the 170 golden EXPLORATORY
+# queries across all three catalogs - "way to back up my photos", "device to track my
+# daily fitness", "gear for taking calls hands-free while driving" among them - were
+# silently landing in ATTRIBUTE because none contained a hand-picked occasion word
+# (`_EXPLORATORY_CUE`) and the unconditional "mid-length query" ATTRIBUTE bonus below
+# outweighed the weaker "no numerics" EXPLORATORY one. This is a structural pattern,
+# not a per-word list: a need/purpose frame generalizes past any single catalog's
+# vocabulary, unlike enumerating every possible activity. Confirmed this was fashion's
+# worst-scoring cell's actual root cause (nDCG@10=0.7379, `eval/results/report.md`),
+# not a fundamental limit of lexical classification - see PROGRESS.md.
+_NEED_FRAME_CUE = re.compile(
+    r"\b(way|method|tool|device|gear|solution|something|anything)\s+(?:to|for)\b"
+    r"|\bprotect\s+\w+",
+    re.IGNORECASE,
+)
+
+# Usage-context words: name an activity/occasion the product is *for*, not a style or
+# spec attribute of the product itself (contrast `_ATTRIBUTE_CUE`'s "casual"/"formal" -
+# those name how a garment looks, these name what it's used for or who it's for).
+# Same golden-set investigation as `_NEED_FRAME_CUE` above surfaced these as the
+# fashion-specific half of the 23 misses ("workout clothes for the gym", "bag for
+# daily college use", "cozy home wear for a lazy Sunday").
+_CONTEXT_CUE = re.compile(
+    r"\b(daily wear|everyday|workout|the gym|travel|for running|college|newborn|"
+    r"office wear|working from home|lazy sunday)\b",
+    re.IGNORECASE,
+)
+
 # Attribute adjectives that constrain but do not identify. "casual"/"formal" moved
 # here from `_EXPLORATORY_CUE` - see that regex's comment for why.
 _ATTRIBUTE_CUE = re.compile(
@@ -166,7 +197,10 @@ def classify(query: str) -> Classification:
         scores[QueryClass.IDENTIFIER] += 1.0
         reasons.append("quoted exact phrase")
 
-    if n_tokens <= 3 and not _EXPLORATORY_CUE.search(q):
+    # `n_tokens` counts tokens, not characters - without the length check, a single
+    # very long run-on token (a pasted URL, a paste error with no spaces) reads as
+    # "short" by token count and gets routed keyword-heavy, the opposite of intent.
+    if 1 <= n_tokens <= 3 and len(q) <= 60 and not _EXPLORATORY_CUE.search(q):
         scores[QueryClass.IDENTIFIER] += 0.6
         reasons.append("very short query")
 
@@ -194,6 +228,14 @@ def classify(query: str) -> Classification:
     if _EXPLORATORY_CUE.search(q):
         scores[QueryClass.EXPLORATORY] += 2.0
         reasons.append("intent/occasion language")
+
+    if _NEED_FRAME_CUE.search(q):
+        scores[QueryClass.EXPLORATORY] += 2.0
+        reasons.append("need/purpose framing")
+
+    if _CONTEXT_CUE.search(q):
+        scores[QueryClass.EXPLORATORY] += 2.0
+        reasons.append("usage-context language")
 
     if _QUESTION_CUE.search(q):
         scores[QueryClass.EXPLORATORY] += 0.8

@@ -29,9 +29,11 @@ from pymongo.errors import ConnectionFailure
 from app.database import get_sessionmaker
 from app.ingestion.adapters.base import ColumnMapping, FeedAdapter, ParseStats
 from app.ingestion.embed import aembed_documents
+from app.llm import semantic_cache
 from app.models.db import IngestionJob, JobStatus, Merchant
 from app.models.product import IngestionError, Product
 from app.mongo import raw_products_collection
+from app.redis_client import get_redis_client
 from app.retrieval import weaviate_client as wv
 from app.retrieval.weaviate_client import WEAVIATE_TRANSIENT_ERRORS
 from app.retry import with_retry
@@ -300,6 +302,14 @@ async def ingest(
                     )
 
         await _store_raw_rows(merchant.tenant, parsed.raw_by_sku)
+
+    # A merchant's re-ingest that actually changed something (a price, a restock, a
+    # discontinued SKU) must not leave the chat semantic cache serving a shopper an
+    # answer built from the old catalog state - see `semantic_cache.invalidate`'s
+    # docstring. Skipped when nothing changed (`to_upsert`/`deleted` both empty) to
+    # avoid a pointless Redis write on every no-op re-ingest.
+    if to_upsert or deleted:
+        await semantic_cache.invalidate(get_redis_client(), merchant.tenant)
 
     return IngestOutcome(
         parse=parsed.stats,

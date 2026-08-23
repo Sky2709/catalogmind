@@ -101,6 +101,68 @@ def test_casual_and_formal_still_classify_as_exploratory_with_real_intent_langua
     assert classify(query).query_class is QueryClass.EXPLORATORY
 
 
+# --- need/purpose framing and usage-context: exploratory without an occasion word ---
+# Real bug caught by `eval/retrieval_eval.py`'s *live* classification (not the golden
+# label, which decides the alpha actually measured): 23 of 170 golden EXPLORATORY
+# queries across all three catalogs had no word in `_EXPLORATORY_CUE` and lost the
+# unconditional "mid-length query" ATTRIBUTE bonus to the weaker "no numerics"
+# EXPLORATORY one - fashion's worst-scoring cell (nDCG@10=0.7379) traced directly to
+# this. See PROGRESS.md for the full investigation.
+NEED_FRAME_QUERIES = [
+    "way to back up my photos",
+    "device to track my daily fitness",
+    "gear for taking calls hands-free while driving",
+    "solution for slow wifi at home",
+    "protect my new smartphone screen from scratches",
+]
+
+CONTEXT_CUE_QUERIES = [
+    "comfortable footwear for daily wear",
+    "workout clothes for the gym",
+    "sports shoes for running",
+    "bag for daily college use",
+    "baby clothing for a newborn",
+]
+
+
+@pytest.mark.parametrize("query", NEED_FRAME_QUERIES)
+def test_need_frame_queries_classify_as_exploratory(query: str) -> None:
+    assert classify(query).query_class is QueryClass.EXPLORATORY
+
+
+@pytest.mark.parametrize("query", CONTEXT_CUE_QUERIES)
+def test_usage_context_queries_classify_as_exploratory(query: str) -> None:
+    assert classify(query).query_class is QueryClass.EXPLORATORY
+
+
+def test_running_shoes_stays_attribute_not_exploratory() -> None:
+    """A real false positive caught while adding the usage-context cue above: a bare
+    'running' cue misfired on this product-category phrase (the shoe *type*, not a
+    purpose/activity description) - narrowed to the 'for running' phrase instead."""
+    assert classify("men's running shoes").query_class is QueryClass.ATTRIBUTE
+
+
+# --- signal-less input: must not default to an extreme -------------------------
+
+
+@pytest.mark.parametrize("query", ["!!!", "...", "\U0001f45f\U0001f45f\U0001f45f"])
+def test_signal_less_query_defaults_to_attribute_not_identifier(query: str) -> None:
+    """Pure punctuation or emoji tokenizes to zero real tokens - a real bug had this
+    satisfying the 'very short query' (<=3 tokens) check anyway and landing in
+    IDENTIFIER (alpha=0.1, the worst possible choice for content with zero chance of
+    BM25 term overlap), instead of the documented 'safe middle' default."""
+    result = classify(query)
+    assert result.query_class is QueryClass.ATTRIBUTE
+    assert result.confidence == 0.0
+
+
+def test_very_long_single_token_does_not_classify_as_short_query() -> None:
+    """A pasted URL or paste-error with no spaces is one 'token' by count but not
+    short by any reasonable definition - must not route keyword-heavy just because it
+    has no whitespace."""
+    assert classify("a" * 10_000).query_class is not QueryClass.IDENTIFIER
+
+
 def test_empty_query_does_not_crash() -> None:
     result = classify("   ")
     assert result.confidence == 0.0

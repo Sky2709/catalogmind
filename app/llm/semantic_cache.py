@@ -64,6 +64,22 @@ async def lookup(
     return best
 
 
+async def invalidate(redis: Any, tenant: str) -> None:
+    """Drop every cached answer for a tenant - call after a re-ingestion actually
+    changes the catalog (a price, a restock, a discontinued SKU).
+
+    A real, previously-unfixed gap: this cache had no invalidation story at all, keyed
+    purely on `tenant` with a flat 24h TTL and no catalog-version/content-hash check
+    anywhere in it. A merchant re-ingesting their feed could have a shopper served a
+    cached answer - and its citations, including price and stock status - from before
+    the update for up to 24h, or until 200 newer queries evicted it. Same failure
+    shape as the write-without-a-cache-flag bug this module's `store()` caller already
+    fixed once (`app/llm/graph.py`'s comment on that fix) - a write path missing a
+    guard that lets stale/wrong content sit in the shared cache for real shoppers.
+    """
+    await redis.delete(_key(tenant))
+
+
 async def store(
     redis: Any,
     tenant: str,
