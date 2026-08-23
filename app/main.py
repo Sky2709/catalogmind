@@ -19,13 +19,16 @@ from app.config import get_settings
 from app.database import dispose_engine
 from app.ingestion.embed import warm_up as warm_up_embedder
 from app.llm.client import dispose_bedrock_client
+from app.llm.semantic_cache import invalidate_all as invalidate_all_semantic_caches
 from app.mongo import dispose_mongo_client
-from app.redis_client import dispose_redis_client
+from app.obs.logging import configure_structlog
+from app.redis_client import dispose_redis_client, get_redis_client
 from app.retrieval.rerank import warm_up as warm_up_reranker
 from app.retrieval.weaviate_client import dispose_shared_client
 from app.routers import chat, health, ingestion, merchants, metrics, search, usage
 
 logging.basicConfig(level=get_settings().log_level)
+configure_structlog()
 logger = logging.getLogger("catalogmind")
 
 DESCRIPTION = """
@@ -74,6 +77,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     t0 = time.perf_counter()
     await asyncio.gather(asyncio.to_thread(warm_up_embedder), asyncio.to_thread(warm_up_reranker))
     logger.info("warmed embedding + reranker models in %.2fs", time.perf_counter() - t0)
+
+    # `make dev`'s `--reload` only kills/respawns this process - Redis is a
+    # separate, long-lived container (`make up`), so a stale cached chat
+    # answer survives every dev reload even when the underlying code changed.
+    # Local-only: see `semantic_cache.invalidate_all`'s docstring for why this
+    # must never run in `prod`/`ci`.
+    if settings.environment == "local":
+        cleared = await invalidate_all_semantic_caches(get_redis_client())
+        logger.info("local env: cleared %s stale semantic-cache tenant(s) on startup", cleared)
     try:
         yield
     finally:

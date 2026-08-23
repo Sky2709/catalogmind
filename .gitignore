@@ -35,6 +35,9 @@ Thumbs.db
 .idea/
 .vscode/
 
+# runtime logs (redirected `make dev` output, e.g. `make dev 2>&1 | tee catalogmind.log`)
+*.log
+
 # internal working docs - AI-assistant tooling config and the live session
 # journal, kept locally for continuity across sessions, not published in the
 # public repo. DECISIONS.md (Day 7) is the curated, public-facing equivalent.

@@ -80,6 +80,37 @@ async def invalidate(redis: Any, tenant: str) -> None:
     await redis.delete(_key(tenant))
 
 
+async def invalidate_all(redis: Any) -> int:
+    """Drop every cached answer for every tenant - not a per-tenant re-ingestion
+    signal, a blunt "wipe all of it" for exactly one caller: `app/main.py`'s
+    startup, gated to `Settings.environment == "local"` only.
+
+    Real problem this exists to solve: Redis is a separate, long-lived
+    container (`make up`), untouched by `make dev`'s `--reload` restarts of the
+    API process - a stale cached answer survives every dev-server reload,
+    including ones where the underlying code/retrieval behaviour genuinely
+    changed. A real live bug report ("suit, women" surfacing unrelated
+    products) turned out to be exactly this: a stale cache entry, not a fresh
+    reproduction of current behaviour, and diagnosing that took a live
+    reproduction script specifically because the cache silently survived
+    across restarts. Clearing it on every local startup makes "restart the
+    dev server" mean what a developer actually expects it to mean - a genuinely
+    fresh view of current code, not a lucky/unlucky cache hit from an hour ago.
+
+    Deliberately **not** run in `prod`/`ci`: a real production restart (a
+    deploy, a crash-restart, a rolling update) is unrelated to whether search
+    results should have changed, and wiping every tenant's cache on every such
+    restart would pay the real cost/latency benefit this cache exists for, for
+    no reason most of the time. `SCAN`, not `KEYS` - non-blocking, safe even if
+    this were ever pointed at a busy Redis instance (it never should be, but
+    cheap to get right regardless).
+    """
+    deleted = 0
+    async for key in redis.scan_iter(match="semcache:*"):
+        deleted += await redis.delete(key)
+    return deleted
+
+
 async def store(
     redis: Any,
     tenant: str,
