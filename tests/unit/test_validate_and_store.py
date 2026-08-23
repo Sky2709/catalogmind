@@ -26,6 +26,7 @@ import pytest
 
 from app.llm import graph as graph_module
 from app.llm.graph import validate_and_store
+from app.retrieval.base import SearchHit
 
 PRODUCT = {
     "kind": "product",
@@ -40,10 +41,24 @@ PRODUCT = {
     "image_url": None,
 }
 
+OTHER_PRODUCT = {
+    "kind": "product",
+    "sku": "MOUSE-002",
+    "title": "Wireless Mouse",
+    "brand": None,
+    "price": "899.0",
+    "currency": "INR",
+    "in_stock": True,
+    "category_path": [],
+    "rating": None,
+    "image_url": None,
+}
+
 
 def _state(*, answer: str, citations: list[dict[str, Any]], **overrides: Any) -> Any:
     base = {
         "tenant": "demo-electronics-in",
+        "conversation_id": "test-conversation-id",
         "messages": [{"role": "user", "content": "red underwear"}],
         "tool_call_rounds": 1,
         "model_used": "anthropic.claude-haiku-4-5",
@@ -70,7 +85,18 @@ def _mocked_dependencies(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         "observe_claim_mismatch",
         lambda **kwargs: claim_mismatches.append(kwargs),
     )
-    return {"events": events, "cache_store": cache_store, "claim_mismatches": claim_mismatches}
+    # No real Weaviate call in this suite (file docstring) - defaults to "no
+    # cited SKU is resolvable from an earlier turn," overridden per-test below
+    # for the backfill-specific cases.
+    get_by_skus = AsyncMock(return_value=[])
+    fake_retriever = type("FakeRetriever", (), {"get_by_skus": get_by_skus})()
+    monkeypatch.setattr(graph_module, "get_retriever", lambda: fake_retriever)
+    return {
+        "events": events,
+        "cache_store": cache_store,
+        "claim_mismatches": claim_mismatches,
+        "get_by_skus": get_by_skus,
+    }
 
 
 async def test_no_match_marker_hides_products_from_display_and_cache(
@@ -149,6 +175,56 @@ async def test_stats_backed_answer_is_never_cached_even_when_refused(
     )
     await validate_and_store(state)
     _mocked_dependencies["cache_store"].assert_not_awaited()
+
+
+async def test_only_cited_products_are_displayed_not_every_retrieved_candidate(
+    _mocked_dependencies: dict[str, Any],
+) -> None:
+    """Real live bug (2026-08-23, "samsung mobile" against the electronics
+    catalog): search retrieved 5 candidates, the answer named exactly one as
+    "the main match" and explicitly declined the rest - but every candidate
+    still rendered as a card, contradicting the model's own stated judgment."""
+    state = _state(
+        answer="The main match is the [[SKU:CASE-001]] - a solid protective case.",
+        citations=[PRODUCT, OTHER_PRODUCT],
+    )
+    await validate_and_store(state)
+
+    citation_events = [e for e in _mocked_dependencies["events"] if e["type"] == "citations"]
+    assert citation_events == [{"type": "citations", "products": [PRODUCT], "cached": False}]
+
+
+async def test_a_sku_cited_from_an_earlier_turn_is_backfilled_not_hallucinated(
+    _mocked_dependencies: dict[str, Any],
+) -> None:
+    """Real live bug (2026-08-23): asked to filter to a brand this catalog
+    never populated a structured field for, this turn's own tool calls came
+    back empty, so Claude correctly answered from memory of an earlier
+    turn's real search results instead. `ChatState.citations` is reset every
+    turn (`app/routers/chat.py`), so that correct citation isn't in this
+    turn's evidence - `get_by_skus()` must resolve it against the real
+    catalog before deciding it's fake."""
+    state = _state(
+        answer="The flagship is the [[SKU:PHONE-999]], from what I found earlier.",
+        citations=[],
+    )
+    backfilled_hit = SearchHit(sku="PHONE-999", title="Galaxy S23", score=1.0)
+    _mocked_dependencies["get_by_skus"].return_value = [backfilled_hit]
+
+    await validate_and_store(state)
+
+    _mocked_dependencies["get_by_skus"].assert_awaited_once_with(
+        "demo-electronics-in", ["PHONE-999"]
+    )
+    assert not any(
+        m.get("claim_type") == "hallucinated_citation"
+        for m in _mocked_dependencies["claim_mismatches"]
+    )
+    citation_events = [e for e in _mocked_dependencies["events"] if e["type"] == "citations"]
+    assert len(citation_events) == 1
+    displayed = citation_events[0]["products"]
+    assert len(displayed) == 1
+    assert displayed[0]["sku"] == "PHONE-999"
 
 
 async def test_semantic_cache_disabled_skips_the_write_too_not_just_the_read(

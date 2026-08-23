@@ -58,7 +58,7 @@ from app.llm.client import (
     get_bedrock_client,
 )
 from app.llm.cost_tracking import record_llm_usage
-from app.llm.markers import is_no_match
+from app.llm.markers import extract_cited_skus, is_no_match
 from app.llm.model_router import ModelTier, RoutingDecision, classify_complexity
 from app.llm.prompting import (
     FORCE_ANSWER_NUDGE,
@@ -74,6 +74,7 @@ from app.llm.prompting import (
 from app.llm.refusal_text import refuses
 from app.llm.semantic_cache import lookup as cache_lookup
 from app.llm.semantic_cache import store as cache_store
+from app.obs.logging import get_logger
 from app.obs.metrics import (
     observe_chat_request,
     observe_chat_tokens,
@@ -86,6 +87,13 @@ from app.retrieval.hybrid import get_retriever
 from app.retry import with_retry
 
 MAX_TOOL_CALL_ROUNDS = 2
+
+# One JSON line per tool call and one per its result, paired by tenant +
+# conversation_id - see `app/obs/logging.py`'s module docstring for why this
+# exists: it's the only server-side record of what a tool call actually asked
+# for and got back, and a real live bug (a category-correct search still
+# surfacing unrelated products) could only be half-diagnosed without it.
+tool_call_logger = get_logger("catalogmind.tool_calls")
 
 # Confirmed live (2026-08-21, real Bedrock calls), not left as the guide's
 # unconfirmed guess: Haiku 4.5 rejects both `thinking: {"type": "adaptive"}`
@@ -243,10 +251,19 @@ def _last_user_text(messages: list[MessageParam]) -> str:
 
 
 async def maybe_serve_from_cache(state: ChatState) -> dict[str, Any]:
+    query = _last_user_text(state["messages"])
+
     if not get_settings().semantic_cache_enabled:
+        tool_call_logger.info(
+            "query_received",
+            tenant=state["tenant"],
+            conversation_id=state["conversation_id"],
+            query=query,
+            cache_hit=False,
+            cache_enabled=False,
+        )
         return {"cache_hit": False}
 
-    query = _last_user_text(state["messages"])
     embedding = await aembed_query(query)
     cached = await cache_lookup(
         get_redis_client(),
@@ -255,7 +272,34 @@ async def maybe_serve_from_cache(state: ChatState) -> dict[str, Any]:
         threshold=get_settings().semantic_cache_threshold,
     )
     if cached is None:
+        # Every query gets exactly one "was this a cache hit" log line, hit or
+        # miss - a real bug report ("suit, women" surfacing unrelated products)
+        # turned out to be a stale cache entry, and diagnosing that took a
+        # live reproduction script rather than a grep, because a cache HIT
+        # logged nothing at all (the tool_call/tool_result logs below only
+        # fire on a miss, when a tool actually runs). This line closes that -
+        # from here, "was this query served from cache" is answered by the
+        # log, not by re-running the conversation and hoping it reproduces.
+        tool_call_logger.info(
+            "query_received",
+            tenant=state["tenant"],
+            conversation_id=state["conversation_id"],
+            query=query,
+            cache_hit=False,
+            cache_enabled=True,
+        )
         return {"cache_hit": False}
+
+    tool_call_logger.info(
+        "query_received",
+        tenant=state["tenant"],
+        conversation_id=state["conversation_id"],
+        query=query,
+        cache_hit=True,
+        cache_similarity=round(cached.similarity, 4),
+        cached_answer=cached.answer,
+        cached_citations=cached.citations,
+    )
 
     writer = get_stream_writer()
     writer({"type": "citations", "products": cached.citations, "cached": True})
@@ -285,6 +329,20 @@ async def agent(state: ChatState) -> dict[str, Any]:
         )
     )
     model = _model_for(decision.tier)
+    # Which model this round actually runs on, and why - a trace reader
+    # otherwise has to infer the tier from the model name alone, with no way
+    # to see the routing *reason* (`decision.reasons`) at all. One line per
+    # round, not per turn: a round-2 escalation (or de-escalation) is exactly
+    # the kind of thing worth seeing in the trace, not collapsed away.
+    tool_call_logger.info(
+        "model_routing",
+        tenant=state["tenant"],
+        conversation_id=state["conversation_id"],
+        tool_call_round=state["tool_call_rounds"],
+        model=model,
+        tier=decision.tier,
+        reasons=decision.reasons,
+    )
     client = get_bedrock_client()
     writer = get_stream_writer()
 
@@ -405,8 +463,37 @@ async def agent(state: ChatState) -> dict[str, Any]:
         # `payload.input`/`payload.tool` now, not assume `payload.query` exists.
         tool_input = call.input if isinstance(call.input, dict) else {}
         writer({"type": "tool_call", "tool": call.name, "input": tool_input})
+        # The SSE event above only ever reaches the browser - nothing server-side
+        # recorded a tool call's actual query/filters until this line existed. A
+        # real live bug report (a category-correct search still surfacing
+        # unrelated products) could only be half-diagnosed without it: proving
+        # the symptom was real, not confirming the mechanism, because there was
+        # no way to reconstruct what had actually been searched for. See
+        # `app/obs/logging.py`'s module docstring for the full account.
+        tool_call_logger.info(
+            "tool_call",
+            tenant=state["tenant"],
+            conversation_id=state["conversation_id"],
+            tool=call.name,
+            input=tool_input,
+        )
         return {"messages": [assistant_message], "model_used": model}
 
+    # The third path a query can take, after "cache hit" and "tool call": the
+    # model answers directly (a pure clarifying question, or the round that
+    # finally answers after 1-2 tool-call rounds - same branch either way,
+    # since it just means "this round produced text, not a new tool_use").
+    # Logged too, so "what happened for this query" never has an unlogged
+    # branch regardless of which of the three paths it took.
+    tool_call_logger.info(
+        "final_answer",
+        tenant=state["tenant"],
+        conversation_id=state["conversation_id"],
+        tool_call_rounds=state["tool_call_rounds"],
+        forced_no_tools=bool(state.get("force_no_tools")),
+        is_no_match=is_no_match(turn.text),
+        answer=turn.text,
+    )
     return {
         "messages": [assistant_message],
         "model_used": model,
@@ -415,39 +502,43 @@ async def agent(state: ChatState) -> dict[str, Any]:
 
 
 def _filters_from_tool_input(tool_input: Mapping[str, Any]) -> SearchFilters:
-    """The four structured filter fields every catalog tool schema shares
-    (`app/llm/prompting.py::_PRICE_BRAND_FILTER_PROPERTIES`), translated from the
+    """The structured filter fields every catalog tool schema shares
+    (`app/llm/prompting.py::_price_brand_filter_properties`), translated from the
     model's JSON args into a real `SearchFilters`. Exposed as singular `brand`/
-    `category` strings in the tool schema (simpler for the model to emit for the
-    common case) - wrapped into the one-item lists `SearchFilters` expects;
+    `category`/`gender` strings in the tool schema (simpler for the model to emit
+    for the common case) - wrapped into the one-item lists `SearchFilters` expects;
     multi-value questions ("Nike or Adidas") are out of scope for now."""
     min_price = tool_input.get("min_price")
     max_price = tool_input.get("max_price")
     brand = tool_input.get("brand")
     category = tool_input.get("category")
+    gender = tool_input.get("gender")
     return SearchFilters(
         min_price=Decimal(str(min_price)) if min_price is not None else None,
         max_price=Decimal(str(max_price)) if max_price is not None else None,
         brands=[brand] if brand else None,
         categories=[category] if category else None,
+        genders=[gender] if gender else None,
         in_stock_only=bool(tool_input.get("in_stock_only", False)),
     )
 
 
-# Each handler takes `tenant` as an explicit argument from `state["tenant"]`,
-# *never* from `tool_input` - none of the three tool schemas
-# (`app/llm/prompting.py`) declare a `tenant`/`merchant`/`store` property, so the
-# model has no field to fill even under a prompt-injection attempt. This is the
-# existing, correct pattern `search_catalog` already used; preserved exactly
-# here rather than let a "generic dispatch" refactor introduce a
-# `tool_input.get("tenant", state["tenant"])` convenience path, which would
-# quietly reintroduce the caller-controlled-tenant-filter shortcut CLAUDE.md's
-# tenant-isolation invariant exists to forbid - except LLM-controlled, which is
-# strictly worse. Each returns `(tool_result_for_the_model, evidence_for_state)`.
+# Each handler takes `tenant` (and, for the same reason, `conversation_id` -
+# used only for the trace logging below, never sent to the model) as an
+# explicit argument from `state`, *never* from `tool_input` - none of the
+# three tool schemas (`app/llm/prompting.py`) declare a `tenant`/`merchant`/
+# `store` property, so the model has no field to fill even under a
+# prompt-injection attempt. This is the existing, correct pattern
+# `search_catalog` already used; preserved exactly here rather than let a
+# "generic dispatch" refactor introduce a `tool_input.get("tenant", ...)`
+# convenience path, which would quietly reintroduce the caller-controlled-
+# tenant-filter shortcut CLAUDE.md's tenant-isolation invariant exists to
+# forbid - except LLM-controlled, which is strictly worse. Each returns
+# `(tool_result_for_the_model, evidence_for_state)`.
 
 
 async def _run_search_catalog(
-    tenant: str, tool_input: Mapping[str, Any]
+    tenant: str, conversation_id: str, tool_input: Mapping[str, Any]
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     query = str(tool_input.get("query", ""))
     filters = _filters_from_tool_input(tool_input)
@@ -457,15 +548,50 @@ async def _run_search_catalog(
         request = SearchRequest(query=query, tenant=tenant, limit=5, filters=filters)
         result = await get_retriever().search(request)
         hits = result.hits
+        # Everything Claude never sees but a "what actually happened for this
+        # query" trace needs: which alpha/query-class the classifier picked,
+        # whether reranking ran, how many candidates existed before the top-5
+        # cut, and per-stage timing - dropped on the floor before this log
+        # existed the moment `hits_to_tool_result` below discards `result`
+        # down to just the citable fields.
+        tool_call_logger.info(
+            "search_metadata",
+            tenant=tenant,
+            conversation_id=conversation_id,
+            query=query,
+            sort_by=sort_by,
+            alpha_used=result.alpha_used,
+            query_class=result.query_class.value if result.query_class else None,
+            reranked=result.reranked,
+            retrieved_count=result.retrieved_count,
+            stage_timings_ms=result.stage_timings_ms,
+        )
     else:
+        # `search_sorted` bypasses alpha routing/reranking entirely by design
+        # (its own docstring: the pool's order is about to be discarded in
+        # favour of a price/rating sort) - logged as such, not omitted, so a
+        # trace reader never has to guess why this call has no alpha/rerank
+        # fields.
         hits = await get_retriever().search_sorted(tenant, query, filters, sort_by, limit=5)
+        tool_call_logger.info(
+            "search_metadata",
+            tenant=tenant,
+            conversation_id=conversation_id,
+            query=query,
+            sort_by=sort_by,
+            alpha_used=None,
+            query_class=None,
+            reranked=False,
+            retrieved_count=len(hits),
+            stage_timings_ms=None,
+        )
 
     tool_result = hits_to_tool_result(hits)
     return tool_result, hits_to_evidence(hits)
 
 
 async def _run_get_catalog_stats(
-    tenant: str, tool_input: Mapping[str, Any]
+    tenant: str, conversation_id: str, tool_input: Mapping[str, Any]
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     filters = _filters_from_tool_input(tool_input)
     metric = tool_input.get("metric", "price")
@@ -475,7 +601,7 @@ async def _run_get_catalog_stats(
 
 
 async def _run_get_product_detail(
-    tenant: str, tool_input: Mapping[str, Any]
+    tenant: str, conversation_id: str, tool_input: Mapping[str, Any]
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     requested_skus = [str(s) for s in tool_input.get("skus", [])]
     hits = await get_retriever().get_by_skus(tenant, requested_skus)
@@ -506,7 +632,18 @@ async def tool_node(state: ChatState) -> dict[str, Any]:
     # A KeyError here means agent()'s tool list and this dispatch table have
     # drifted - a real bug to surface loudly, not swallow.
     handler = _TOOL_HANDLERS[call.name]
-    tool_result, new_evidence = await handler(state["tenant"], tool_input)
+    tool_result, new_evidence = await handler(state["tenant"], state["conversation_id"], tool_input)
+    # Paired with the "tool_call" log above by tenant + conversation_id - the
+    # full result, not just a count, since a summary would have been exactly
+    # useless for the bug this logging exists to make diagnosable (need to see
+    # each returned product's own fields, not just how many came back).
+    tool_call_logger.info(
+        "tool_result",
+        tenant=state["tenant"],
+        conversation_id=state["conversation_id"],
+        tool=call.name,
+        result=tool_result,
+    )
 
     new_rounds = state["tool_call_rounds"] + 1
     tool_result_message: MessageParam = {
@@ -556,14 +693,40 @@ async def validate_and_store(state: ChatState) -> dict[str, Any]:
     product_evidence = [c for c in state["citations"] if c.get("kind") == "product"]
     stats_evidence = [c for c in state["citations"] if c.get("kind") == "stats"]
 
+    # A cited SKU can legitimately come from an *earlier* turn in this same
+    # conversation - Claude's own message history persists across turns, but
+    # `ChatState.citations` is reset to `[]` at the start of every turn
+    # (`app/routers/chat.py`) so the checks below stay scoped to "what did
+    # *this* turn's tools actually find," not the whole conversation's
+    # accumulated evidence. Real live case (2026-08-23): asked to filter to
+    # "Samsung" only, both of this turn's tool calls came back empty (the
+    # catalog's `brand` field is genuinely unpopulated for this tenant - a
+    # real data gap, not a bug), so Claude correctly answered from memory of
+    # an earlier turn's real search results instead - and every one of those
+    # correct citations got flagged as hallucinated, with zero product cards
+    # shown for an answer that named three real, priced, in-stock products.
+    # Backfilled here via `get_by_skus()` - the exact method already built
+    # for "a follow-up referencing a SKU already known from conversation
+    # history" (see its own docstring) - so a legitimately recalled SKU is
+    # verified against the real catalog instead of just this turn's
+    # (possibly empty) search results.
+    cited_skus = extract_cited_skus(answer)
+    known_skus = {str(e.get("sku", "")).casefold() for e in product_evidence}
+    missing_skus = [sku for sku in cited_skus if sku.casefold() not in known_skus]
+    if missing_skus:
+        backfilled_hits = await get_retriever().get_by_skus(state["tenant"], missing_skus)
+        product_evidence = product_evidence + hits_to_evidence(backfilled_hits)
+
     hallucinated = find_hallucinated_citations(answer, product_evidence)
     if hallucinated:
         observe_claim_mismatch(claim_type="hallucinated_citation", count=len(hallucinated))
 
-    if find_stat_claim_mismatch(answer, stats_evidence):
+    stat_mismatch = find_stat_claim_mismatch(answer, stats_evidence)
+    if stat_mismatch:
         observe_claim_mismatch(claim_type="stat_mismatch", count=1)
 
-    if find_unverified_quantitative_refusal(answer, stats_evidence):
+    unverified_refusal = find_unverified_quantitative_refusal(answer, stats_evidence)
+    if unverified_refusal:
         observe_claim_mismatch(claim_type="unverified_quantitative_refusal", count=1)
 
     # Signal only, not a gate (confirmed with the user) - matches
@@ -572,7 +735,8 @@ async def validate_and_store(state: ChatState) -> dict[str, Any]:
     # positive. Lets production track "did a superlative-shaped question
     # actually get a get_catalog_stats call" as a leading indicator, the same
     # signal that would have caught the flagship bug before a user hit it.
-    if has_superlative_language(query) and not stats_evidence:
+    superlative_without_stats = has_superlative_language(query) and not stats_evidence
+    if superlative_without_stats:
         observe_claim_mismatch(claim_type="superlative_without_stats", count=1)
 
     # A refusal-shaped answer ("this catalog doesn't carry X") means the model
@@ -595,7 +759,24 @@ async def validate_and_store(state: ChatState) -> dict[str, Any]:
     # fails to emit the marker but its prose still reads as a refusal (a
     # compliance miss), the lexical detector still catches the display-layer
     # symptom.
-    displayed_products = [] if is_no_match(answer) or refuses(answer) else product_evidence
+    #
+    # Beyond the all-or-nothing refusal case: display only the SKUs Claude
+    # actually cited, not every candidate this turn's tools happened to
+    # retrieve. Real live case (2026-08-23, "samsung mobile" against the
+    # electronics catalog): search returned 5 candidates - a real phone, a
+    # misclassified accessory, two unrelated-brand feature phones - and the
+    # answer named exactly one as "the main match," correctly declining the
+    # rest in prose. The cards still showed all 5, visually contradicting
+    # the model's own stated judgment. `cited_skus` (extracted above, before
+    # the backfill) is the same marker-based ground truth already used for
+    # hallucination detection - trusting that signal for display too, rather
+    # than inventing a second notion of "relevant."
+    cited_set = {sku.casefold() for sku in cited_skus}
+    displayed_products = (
+        []
+        if is_no_match(answer) or refuses(answer)
+        else [e for e in product_evidence if str(e.get("sku", "")).casefold() in cited_set]
+    )
 
     writer = get_stream_writer()
     writer({"type": "citations", "products": displayed_products, "cached": False})
@@ -608,12 +789,30 @@ async def validate_and_store(state: ChatState) -> dict[str, Any]:
     # written to the *shared* semantic cache regardless, where a real shopper's
     # semantically similar query could have been served that broken answer later.
     # Also skips a wasted embedding call when caching is off entirely.
-    if get_settings().semantic_cache_enabled and not stats_evidence:
+    cache_written = get_settings().semantic_cache_enabled and not stats_evidence
+    if cache_written:
         embedding = await aembed_query(query)
         await cache_store(
             get_redis_client(), state["tenant"], embedding, answer, displayed_products
         )
     observe_chat_request(model=state["model_used"] or "unknown", cache_hit=False)
+
+    # The trace's closing line: everything the four validation checks above
+    # found, plus what actually got shown to the shopper and written to the
+    # semantic cache - the one place a reader can see "did this turn's answer
+    # hold up," not just "what was asked and searched for."
+    tool_call_logger.info(
+        "turn_validated",
+        tenant=state["tenant"],
+        conversation_id=state["conversation_id"],
+        model=state["model_used"],
+        hallucinated_citations=hallucinated,
+        stat_mismatch=stat_mismatch,
+        unverified_quantitative_refusal=unverified_refusal,
+        superlative_without_stats=superlative_without_stats,
+        displayed_product_count=len(displayed_products),
+        cache_written=cache_written,
+    )
     return {}
 
 

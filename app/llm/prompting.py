@@ -37,7 +37,7 @@ tools:
 
 - `search_catalog`: relevance-ranked search, returns a handful of results. Use
   it to find products matching what the shopper described. It accepts optional
-  price/brand/category/in-stock filters, and an optional `sort_by` for "cheapest/
+  price/brand/category/gender/in-stock filters, and an optional `sort_by` for "cheapest/
   priciest/best-rated **matching this description**" (e.g. "cheapest waterproof
   jacket").
 - `get_catalog_stats`: exact count/min/max/average price (or rating, or review
@@ -54,7 +54,7 @@ tools:
 
 Two claims need different levels of confidence, and your wording must reflect
 that difference:
-1. A claim backed by `get_catalog_stats` (a price/brand/category/stock-scoped
+1. A claim backed by `get_catalog_stats` (a price/brand/category/gender/stock-scoped
    superlative, threshold, or count) is a real, exact fact about the whole
    catalog - state it plainly.
 2. A claim backed by `search_catalog`'s `sort_by` (a superlative scoped by a
@@ -81,7 +81,7 @@ precisely, with nothing else inside the brackets:
   you go on to recommend or mention any product.
 
 Never invent a SKU, price, count, or product not returned by a tool. A "nothing
-matches" answer about a price/brand/category/stock condition is only correct if
+matches" answer about a price/brand/category/gender/stock condition is only correct if
 `get_catalog_stats` actually reported count=0 for that condition - never
 conclude that from `search_catalog` alone returning few or no results. If
 `get_product_detail` doesn't find a SKU, say it's "not available in this
@@ -128,6 +128,22 @@ FORCE_ANSWER_NUDGE: TextBlockParam = {
 }
 
 
+# Real, measured values from each tenant's raw feed (`data/raw/fashion-myntra/
+# Myntra_fashion_products.csv`'s `gender` column) - not guessed. Only fashion
+# carries a gender concept at all; electronics/home-goods have no such field
+# in their source feeds, so they're simply absent from this dict rather than
+# given an empty or fabricated list - `gender_filter_values` returns `None`
+# for them, the same graceful-degradation signal `category_filter_values`
+# uses for a tenant with no taxonomy on file.
+GENDER_VALUES_BY_TENANT: dict[str, tuple[str, ...]] = {
+    "demo-fashion-in": ("Men", "Women", "Unisex", "Boys", "Girls", "Unisex Kids"),
+}
+
+
+def gender_filter_values(tenant: str) -> tuple[str, ...] | None:
+    return GENDER_VALUES_BY_TENANT.get(tenant)
+
+
 def _price_brand_filter_properties(tenant: str) -> dict[str, object]:
     """Shared by `search_catalog_tool`/`get_catalog_stats_tool` - built fresh per
     tenant (not a module-level constant, unlike before 2026-08-23) because
@@ -159,13 +175,36 @@ def _price_brand_filter_properties(tenant: str) -> dict[str, object]:
     values = category_filter_values(tenant)
     if values is not None:
         category_schema["enum"] = list(values)
-    return {
+
+    properties: dict[str, object] = {
         "min_price": {"type": "number", "description": "Inclusive lower bound."},
         "max_price": {"type": "number", "description": "Inclusive upper bound."},
         "brand": {"type": "string"},
         "category": category_schema,
         "in_stock_only": {"type": "boolean", "default": False},
     }
+
+    # Same reasoning and same graceful-degradation shape as `category` above -
+    # added after a live trace showed exactly the gap this closes: "leather
+    # wallets for men" and "formal watch" both came back with no gender signal
+    # applied at all (one search returned women's wallets, another returned
+    # only women's watches), because `SearchFilters.genders` existed and was
+    # verified working at the retrieval layer, but nothing on the *tool
+    # schema* ever gave Claude a way to ask for it. Omitted entirely (not an
+    # empty enum) for any tenant with no gender concept in its feed at all.
+    gender_values = gender_filter_values(tenant)
+    if gender_values is not None:
+        properties["gender"] = {
+            "type": "string",
+            "enum": list(gender_values),
+            "description": (
+                "The product's target gender, if the shopper's question implies "
+                "one (e.g. 'for men', 'women's'). Omit when no gender is implied "
+                "- do not guess one from context that doesn't actually say it."
+            ),
+        }
+
+    return properties
 
 
 def search_catalog_tool(tenant: str) -> ToolParam:
@@ -178,7 +217,7 @@ def search_catalog_tool(tenant: str) -> ToolParam:
             "anything but the default `relevance`, returns the cheapest/priciest/"
             "best-rated items among a wider pool of matches to the query text - use "
             "this for a superlative scoped by a description ('cheapest waterproof "
-            "jacket'), not by price/brand/category/stock (use get_catalog_stats for "
+            "jacket'), not by price/brand/category/gender/stock (use get_catalog_stats for "
             "those instead, since this only searches a bounded pool of candidates "
             "and can't guarantee it saw every match)."
         ),
@@ -207,7 +246,7 @@ def get_catalog_stats_tool(tenant: str) -> ToolParam:
         "description": (
             "Get exact count/min/max/average for a metric (price by default, or "
             "rating/review count) over the WHOLE matching catalog, not just a "
-            "handful of results - filtered by price/brand/category/stock, never by "
+            "handful of results - filtered by price/brand/category/gender/stock, never by "
             "free text. This is the only correct way to answer a superlative "
             "('highest/lowest priced item'), a threshold ('anything above/under a "
             "price?'), or a count ('how many X do you have?') when the question is "

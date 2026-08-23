@@ -29,6 +29,7 @@ def _tool_use(name: str, tool_input: dict[str, Any]) -> ToolUseBlock:
 def _state(*, tool_use: ToolUseBlock, tenant: str = "demo-fashion-in", **overrides: Any) -> Any:
     base = {
         "tenant": tenant,
+        "conversation_id": "test-conversation-id",
         "messages": [{"role": "assistant", "content": [tool_use]}],
         "tool_call_rounds": 0,
         "model_used": "anthropic.claude-haiku-4-5",
