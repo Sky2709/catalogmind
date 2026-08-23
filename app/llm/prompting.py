@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from anthropic.types import CacheControlEphemeralParam, TextBlockParam, ToolParam
 
+from app.ingestion.taxonomy import category_filter_values
 from app.retrieval.base import CatalogStats, SearchHit
 
 # Real production bug this system prompt is written against (2026-08-22, live-
@@ -126,71 +127,108 @@ FORCE_ANSWER_NUDGE: TextBlockParam = {
     ),
 }
 
-_PRICE_BRAND_FILTER_PROPERTIES: dict[str, object] = {
-    "min_price": {"type": "number", "description": "Inclusive lower bound."},
-    "max_price": {"type": "number", "description": "Inclusive upper bound."},
-    "brand": {"type": "string"},
-    "category": {"type": "string"},
-    "in_stock_only": {"type": "boolean", "default": False},
-}
 
-SEARCH_CATALOG_TOOL: ToolParam = {
-    "name": "search_catalog",
-    "description": (
-        "Search this merchant's product catalog by free text, with optional "
-        "structured filters. Call again with a refined query if the first "
-        "results don't answer the shopper's question. With `sort_by` set to "
-        "anything but the default `relevance`, returns the cheapest/priciest/"
-        "best-rated items among a wider pool of matches to the query text - use "
-        "this for a superlative scoped by a description ('cheapest waterproof "
-        "jacket'), not by price/brand/category/stock (use get_catalog_stats for "
-        "those instead, since this only searches a bounded pool of candidates "
-        "and can't guarantee it saw every match)."
-    ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "What to search for, in the shopper's own words.",
-            },
-            **_PRICE_BRAND_FILTER_PROPERTIES,
-            "sort_by": {
-                "type": "string",
-                "enum": ["relevance", "price_asc", "price_desc", "rating_desc"],
-                "default": "relevance",
-            },
-        },
-        "required": ["query"],
-    },
-}
+def _price_brand_filter_properties(tenant: str) -> dict[str, object]:
+    """Shared by `search_catalog_tool`/`get_catalog_stats_tool` - built fresh per
+    tenant (not a module-level constant, unlike before 2026-08-23) because
+    `category`'s valid values are catalog-specific.
 
-GET_CATALOG_STATS_TOOL: ToolParam = {
-    "name": "get_catalog_stats",
-    "description": (
-        "Get exact count/min/max/average for a metric (price by default, or "
-        "rating/review count) over the WHOLE matching catalog, not just a "
-        "handful of results - filtered by price/brand/category/stock, never by "
-        "free text. This is the only correct way to answer a superlative "
-        "('highest/lowest priced item'), a threshold ('anything above/under a "
-        "price?'), or a count ('how many X do you have?') when the question is "
-        "scoped by one of those structured fields. If this reports count=0, "
-        "that is a confirmed 'nothing matches' - a search_catalog miss alone "
-        "never is."
-    ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "metric": {
-                "type": "string",
-                "enum": ["price", "rating", "review_count"],
-                "default": "price",
+    `category_filter_values` returns `None` for any tenant
+    `scripts/enrich_categories.py` has never been run against (every real
+    merchant beyond the three demo catalogs, today) - `category` degrades to a
+    plain, unconstrained string for those, exactly its original behaviour
+    before this enum existed. A tenant *with* a taxonomy gets an `enum`, not
+    just a description asking Claude to guess a value: CLAUDE.md's own history
+    on this project (`app/llm/markers.py`'s marker protocol) is that Claude
+    reliably follows a fixed, machine-checkable format but free-text guidance
+    on a domain-specific vocabulary is exactly the kind of thing worth
+    constraining at the schema level instead of hoping prose is remembered -
+    an invalid `category` value here isn't almost-right, it's a `contains_any`
+    filter that silently matches nothing.
+    """
+    category_schema: dict[str, object] = {
+        "type": "string",
+        "description": (
+            "A category or subcategory name, if the shopper's question implies "
+            "one - e.g. the subcategory 'Skincare' for a skincare-specific "
+            "question, or the parent category 'Beauty & Personal Care' for a "
+            "broader one (it matches every subcategory underneath it too). "
+            "Omit for a general search with no category implied."
+        ),
+    }
+    values = category_filter_values(tenant)
+    if values is not None:
+        category_schema["enum"] = list(values)
+    return {
+        "min_price": {"type": "number", "description": "Inclusive lower bound."},
+        "max_price": {"type": "number", "description": "Inclusive upper bound."},
+        "brand": {"type": "string"},
+        "category": category_schema,
+        "in_stock_only": {"type": "boolean", "default": False},
+    }
+
+
+def search_catalog_tool(tenant: str) -> ToolParam:
+    return {
+        "name": "search_catalog",
+        "description": (
+            "Search this merchant's product catalog by free text, with optional "
+            "structured filters. Call again with a refined query if the first "
+            "results don't answer the shopper's question. With `sort_by` set to "
+            "anything but the default `relevance`, returns the cheapest/priciest/"
+            "best-rated items among a wider pool of matches to the query text - use "
+            "this for a superlative scoped by a description ('cheapest waterproof "
+            "jacket'), not by price/brand/category/stock (use get_catalog_stats for "
+            "those instead, since this only searches a bounded pool of candidates "
+            "and can't guarantee it saw every match)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "What to search for, in the shopper's own words.",
+                },
+                **_price_brand_filter_properties(tenant),
+                "sort_by": {
+                    "type": "string",
+                    "enum": ["relevance", "price_asc", "price_desc", "rating_desc"],
+                    "default": "relevance",
+                },
             },
-            **_PRICE_BRAND_FILTER_PROPERTIES,
+            "required": ["query"],
         },
-        "required": [],
-    },
-}
+    }
+
+
+def get_catalog_stats_tool(tenant: str) -> ToolParam:
+    return {
+        "name": "get_catalog_stats",
+        "description": (
+            "Get exact count/min/max/average for a metric (price by default, or "
+            "rating/review count) over the WHOLE matching catalog, not just a "
+            "handful of results - filtered by price/brand/category/stock, never by "
+            "free text. This is the only correct way to answer a superlative "
+            "('highest/lowest priced item'), a threshold ('anything above/under a "
+            "price?'), or a count ('how many X do you have?') when the question is "
+            "scoped by one of those structured fields. If this reports count=0, "
+            "that is a confirmed 'nothing matches' - a search_catalog miss alone "
+            "never is."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "metric": {
+                    "type": "string",
+                    "enum": ["price", "rating", "review_count"],
+                    "default": "price",
+                },
+                **_price_brand_filter_properties(tenant),
+            },
+            "required": [],
+        },
+    }
+
 
 GET_PRODUCT_DETAIL_TOOL: ToolParam = {
     "name": "get_product_detail",

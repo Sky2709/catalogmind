@@ -62,13 +62,13 @@ from app.llm.markers import is_no_match
 from app.llm.model_router import ModelTier, RoutingDecision, classify_complexity
 from app.llm.prompting import (
     FORCE_ANSWER_NUDGE,
-    GET_CATALOG_STATS_TOOL,
     GET_PRODUCT_DETAIL_TOOL,
-    SEARCH_CATALOG_TOOL,
     SYSTEM_PROMPT,
+    get_catalog_stats_tool,
     hits_to_evidence,
     hits_to_tool_result,
     product_detail_to_tool_result,
+    search_catalog_tool,
     stats_to_tool_result,
 )
 from app.llm.refusal_text import refuses
@@ -261,6 +261,13 @@ async def maybe_serve_from_cache(state: ChatState) -> dict[str, Any]:
     writer({"type": "citations", "products": cached.citations, "cached": True})
     for chunk in cached.answer.split(" "):
         writer({"type": "token", "text": chunk + " "})
+    # A cache hit never invokes a model, so `catalogmind_chat_requests_total`'s only
+    # other call site (the generation node, below) is never reached on this path -
+    # without this, the `cache_hit="True"` label would never be emitted and a
+    # cache-hit-rate dashboard built on this metric would always read 0%, regardless
+    # of the real rate. `model="cached"` rather than "unknown": this is not an
+    # error/unset state, no model was meant to run.
+    observe_chat_request(model="cached", cache_hit=True)
     return {
         "cache_hit": True,
         "final_answer": cached.answer,
@@ -303,8 +310,8 @@ async def agent(state: ChatState) -> dict[str, Any]:
         stream_kwargs["system"] = [*SYSTEM_PROMPT, FORCE_ANSWER_NUDGE]
     else:
         stream_kwargs["tools"] = [
-            SEARCH_CATALOG_TOOL,
-            GET_CATALOG_STATS_TOOL,
+            search_catalog_tool(state["tenant"]),
+            get_catalog_stats_tool(state["tenant"]),
             GET_PRODUCT_DETAIL_TOOL,
         ]
         # Real bug, not a hypothetical: Claude will happily emit two `tool_use`
