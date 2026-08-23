@@ -74,14 +74,30 @@ class Product(BaseModel):
         """The text actually sent to the embedding model.
 
         Field order matters: title first (highest signal, survives truncation),
-        then brand and category, then description, then flattened attributes.
-        Keep this stable — changing it invalidates every stored vector.
+        then brand, then description, then flattened attributes. Keep this
+        stable — changing it invalidates every stored vector.
+
+        `category_path` deliberately does NOT appear here (removed 2026-08-23,
+        a real re-index migration, not silent drift - see PROGRESS.md). A real
+        measured regression, not a hypothesis: once `category_path` held real,
+        per-product taxonomy text (previously empty for fashion, a single
+        degenerate value for electronics) instead of near-nothing, overall
+        nDCG@10 across all 170 golden queries dropped 0.9021 -> 0.8355 -
+        broadly, including exact-match IDENTIFIER queries category text has no
+        business touching at all. Root cause: adding the same short taxonomy
+        phrase to *every* product in a category proportionally dilutes the
+        specific, discriminating terms (a query for "GAP girls jeans" started
+        ranking a same-brand, same-category hoodie above the actual jeans -
+        both are correctly `Apparel > Kidswear`, but the category text carries
+        no signal to tell jeans from a hoodie, only to drown out the words
+        that do). `category_path` stays a real, populated, filterable Weaviate
+        property (`_build_filters`'s `contains_any` clause) - it's a
+        structured filter dimension now, deliberately not a relevance-ranking
+        one, the same design already used for `gender`.
         """
         parts = [self.title]
         if self.brand:
             parts.append(self.brand)
-        if self.category_path:
-            parts.append(" ".join(self.category_path))
         if self.description:
             parts.append(self.description)
         if self.attributes:

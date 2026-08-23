@@ -114,11 +114,40 @@ def product_properties() -> list[Property]:
             index_filterable=True,
             index_searchable=True,
         ),
+        # index_searchable=False (changed 2026-08-23, a real re-index migration -
+        # see `Product.embedding_text()`'s docstring for the full, measured
+        # account): once this held real per-product taxonomy text instead of
+        # empty/degenerate values, letting BM25 search it directly diluted the
+        # specific, discriminating title/description terms that used to drive
+        # ranking within a category - a broad nDCG regression across every
+        # tenant and query class, not a targeted improvement. Filterable-only
+        # now, same design as `gender` below: a structured filter dimension
+        # (`_build_filters`'s `contains_any` clause), deliberately not a
+        # relevance-ranking signal.
         Property(
             name="category_path",
             data_type=DataType.TEXT_ARRAY,
             index_filterable=True,
-            index_searchable=True,
+            index_searchable=False,
+        ),
+        # Filterable, not just inside `attributes_json`. A real, measured bug (not
+        # hypothetical) traced to gender living only in the open attributes bag: a
+        # ₹58,854 MOVADO watch was invisible to gender/brand filtering
+        # (`hybrid.py::search_sorted`'s docstring), and re-measuring the golden set
+        # after the alpha-router fix (PROGRESS.md) caught it a second, independent
+        # way - "Puma sneakers men" pulled "Puma Women..."/"Puma Unisex..." items
+        # into the top 10 alongside the men's ones it should have found, because
+        # nothing structurally enforces the distinction when the blended score
+        # alone decides rank. Sourced from `Product.attributes["gender"]` at upsert
+        # time (`properties_from_product`), not a new `Product` field - this does
+        # not touch `embedding_text()`, so it is a property backfill, not a
+        # re-index migration.
+        Property(
+            name="gender",
+            data_type=DataType.TEXT,
+            tokenization=Tokenization.FIELD,
+            index_filterable=True,
+            index_searchable=False,
         ),
         Property(name="price", data_type=DataType.NUMBER, index_filterable=True),
         Property(name="original_price", data_type=DataType.NUMBER, index_filterable=True),
@@ -194,6 +223,7 @@ async def ensure_schema(
     """
     if await client.collections.exists(PRODUCT_COLLECTION):
         logger.info("collection %s already exists", PRODUCT_COLLECTION)
+        await _add_missing_properties(client)
         return False
 
     await client.collections.create(
@@ -221,6 +251,25 @@ async def ensure_schema(
         bm25_k1,
     )
     return True
+
+
+async def _add_missing_properties(client: WeaviateAsyncClient) -> None:
+    """Additive schema migration: a property added to `product_properties()` after
+    the collection already existed in a running deployment (e.g. `gender`) needs to
+    be attached to the live collection, not just the code's definition of it -
+    Weaviate does not retroactively pick up new properties on its own. Adding a
+    property is a safe, non-destructive operation (existing objects just read back
+    `None` for it until re-upserted); this only ever adds, never alters/drops, so it
+    is safe to run unconditionally on every `ensure_schema()` call, same as the
+    idempotent collection-creation path above.
+    """
+    collection = client.collections.get(PRODUCT_COLLECTION)
+    config = await collection.config.get()
+    existing = {p.name for p in config.properties}
+    for prop in product_properties():
+        if prop.name not in existing:
+            logger.info("adding missing property %s to %s", prop.name, PRODUCT_COLLECTION)
+            await collection.config.add_property(prop)
 
 
 # --- connection ----------------------------------------------------------------
@@ -366,6 +415,7 @@ def properties_from_product(product: Product) -> dict[str, Any]:
         "description": product.description,
         "brand": product.brand,
         "category_path": product.category_path,
+        "gender": product.attributes.get("gender"),
         "price": float(product.price) if product.price is not None else None,
         "original_price": (
             float(product.original_price) if product.original_price is not None else None

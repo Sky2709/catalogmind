@@ -50,7 +50,20 @@ def test_rerank_text_orders_title_first() -> None:
     lines = text.split("\n")
     assert lines[0] == "Waterproof Hiking Boots"
     assert "Trailblazer" in lines
-    assert "Footwear Hiking" in lines
+
+
+def test_rerank_text_excludes_category_path() -> None:
+    """A real, measured regression, not a hypothesis - see
+    `Product.embedding_text()`'s docstring: once `category_path` held real
+    per-product text, letting it feed BM25/rerank text diluted the
+    discriminating title/description terms broadly enough to drop overall
+    nDCG@10 from 0.9021 to 0.8355 across all 170 golden queries. Filterable
+    Weaviate property only now, same design as `gender`."""
+    text = rerank_text(
+        {"title": "Waterproof Trail Boots", "category_path": ["Footwear", "Outdoor Gear"]}
+    )
+    assert "Footwear" not in text
+    assert "Outdoor Gear" not in text
 
 
 def test_rerank_text_tolerates_missing_optional_fields() -> None:

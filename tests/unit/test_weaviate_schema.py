@@ -51,8 +51,22 @@ def test_sku_is_word_tokenized_and_searchable(props: dict) -> None:
 
 def test_text_signal_fields_are_searchable(props: dict) -> None:
     """BM25 must see everything a shopper might phrase their query in terms of."""
-    for name in ("title", "description", "brand", "category_path", "attributes_text"):
+    for name in ("title", "description", "brand", "attributes_text"):
         assert props[name].indexSearchable is True, f"{name} is invisible to BM25"
+
+
+def test_category_path_is_filterable_but_not_searchable(props: dict) -> None:
+    """Changed 2026-08-23, a real measured regression, not a hypothesis (see
+    `Product.embedding_text()`'s docstring): once populated with real
+    per-product taxonomy text instead of empty/degenerate values, letting BM25
+    search `category_path` directly diluted the specific, discriminating
+    title/description terms broadly enough to drop overall nDCG@10 from
+    0.9021 to 0.8355 across all 170 golden queries. Filterable-only now, same
+    design as `gender` - a structured filter dimension, deliberately not a
+    relevance-ranking signal."""
+    cp = props["category_path"]
+    assert cp.indexFilterable is True
+    assert cp.indexSearchable is False
 
 
 def test_filterable_fields_support_structured_prefilters(props: dict) -> None:

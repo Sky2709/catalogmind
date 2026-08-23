@@ -59,6 +59,17 @@ class SearchFilters(BaseModel):
     brands: list[str] | None = Field(None, max_length=20)
     categories: list[str] | None = Field(None, max_length=20)
     in_stock_only: bool = False
+    genders: list[str] | None = Field(
+        None,
+        max_length=5,
+        description=(
+            "Exact membership against the `gender` property (e.g. 'Men', 'Women', "
+            "'Unisex'). Only populated for catalogs whose feed carries it (fashion "
+            "today) - `None`/absent for a tenant without the field, never an "
+            "empty-result filter."
+        ),
+    )
+    min_rating: Decimal | None = None
 
 
 class SearchRequest(BaseModel):
@@ -106,6 +117,7 @@ class SearchHit(BaseModel):
     in_stock: bool = True
     image_url: str | None = None
     category_path: list[str] = Field(default_factory=list)
+    gender: str | None = None
     attributes: dict[str, Any] = Field(default_factory=dict)
     rating: Decimal | None = None
     """`None` means no rating recorded for this product, not "not fetched" -

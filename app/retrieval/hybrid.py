@@ -67,6 +67,7 @@ RETURN_PROPERTIES = [
     "description",
     "brand",
     "category_path",
+    "gender",
     "price",
     "currency",
     "in_stock",
@@ -103,6 +104,13 @@ def _build_filters(filters: SearchFilters) -> FilterReturn | None:
         clauses.append(Filter.by_property("category_path").contains_any(filters.categories))
     if filters.in_stock_only:
         clauses.append(Filter.by_property("in_stock").equal(True))
+    if filters.genders:
+        gender_filter = Filter.by_property("gender").equal(filters.genders[0])
+        for gender in filters.genders[1:]:
+            gender_filter = gender_filter | Filter.by_property("gender").equal(gender)
+        clauses.append(gender_filter)
+    if filters.min_rating is not None:
+        clauses.append(Filter.by_property("rating").greater_or_equal(float(filters.min_rating)))
 
     if not clauses:
         return None
@@ -118,14 +126,14 @@ def rerank_text(properties: Mapping[str, Any]) -> str:
     Mirrors `Product.embedding_text()`'s field order so the reranker sees the same
     signal the vector index was built from - built from Weaviate's returned
     properties rather than a `Product`, because that is all a search hit has at this
-    point in the pipeline.
+    point in the pipeline. `category_path` deliberately excluded here too, for the
+    same measured reason `embedding_text()`'s docstring gives (a real, broad nDCG
+    regression, not a hypothesis) - keeping this mirror accurate matters more than
+    the extra signal would have.
     """
     parts = [str(properties.get("title") or "")]
     if properties.get("brand"):
         parts.append(str(properties["brand"]))
-    category_path = properties.get("category_path") or []
-    if category_path:
-        parts.append(" ".join(category_path))
     if properties.get("description"):
         parts.append(str(properties["description"]))
     if properties.get("attributes_text"):
@@ -159,6 +167,7 @@ def hit_from_properties(
         in_stock=bool(properties.get("in_stock", True)),
         image_url=properties.get("image_url"),
         category_path=list(properties.get("category_path") or []),
+        gender=properties.get("gender"),
         attributes=attributes,
         rating=_to_decimal(properties.get("rating")),
         rank_before_rerank=rank_before_rerank,
