@@ -34,3 +34,9 @@ eval/results/*
 Thumbs.db
 .idea/
 .vscode/
+
+# internal working docs - AI-assistant tooling config and the live session
+# journal, kept locally for continuity across sessions, not published in the
+# public repo. DECISIONS.md (Day 7) is the curated, public-facing equivalent.
+CLAUDE.md
+PROGRESS.md
