@@ -61,9 +61,7 @@ async def enforce_chat_rate_limit(merchant: ScopedMerchant) -> None:
 
 
 @contextmanager
-def _turn_trace(
-    tenant: str, conversation_id: str, thread_id: str, message: str
-) -> Iterator[None]:
+def _turn_trace(tenant: str, conversation_id: str, thread_id: str, message: str) -> Iterator[None]:
     """One Langfuse span per chat turn, grouped into one Langfuse *session* per
     conversation via `propagate_attributes(session_id=...)` - without this, each
     turn shows up as an unrelated top-level trace, only linked by a
