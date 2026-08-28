@@ -63,16 +63,24 @@ async def test_sku_shaped_query_skips_reranking_by_default(
     assert "rerank_ms" not in body["stage_timings_ms"]
 
 
-async def test_short_query_misclassified_as_identifier_still_reranks(
+async def test_allcaps_query_misclassified_as_identifier_still_reranks(
     client: AsyncClient, catalog_merchant
 ) -> None:
-    """`classify("hiking boots")` lands in the IDENTIFIER class (nothing else fires
-    for a short query), but there is no real product-code token in it, so it must
-    still get reranked by default - pins the false positive `has_identifier_shaped_token`
-    exists to avoid."""
+    """An ALLCAPS token with no digits (e.g. a brand name typed in caps) still lands
+    in the IDENTIFIER class via `classify()`'s `caps` signal alone, but carries no
+    real product-code token - `has_identifier_shaped_token()` requires a digit
+    (see its regex), so it's False here. It must still get reranked by default -
+    pins the false positive `has_identifier_shaped_token()` exists to avoid.
+
+    A short, cue-less natural-language query like "hiking boots" used to hit this
+    same edge case via a blanket "short query -> IDENTIFIER" rule in `classify()` -
+    removed 2026-08-26 as a real classifier bug (see `app/retrieval/alpha_router.py`
+    and `PROGRESS.md`), so such a query now correctly falls through to ATTRIBUTE
+    instead. The ALLCAPS path is what's left that still exercises this rerank-skip
+    edge case."""
     response = await client.post(
         f"/v1/merchants/{catalog_merchant.tenant}/search",
-        json={"query": "hiking boots"},
+        json={"query": "TRAILHEAD"},
         headers=catalog_merchant.headers,
     )
     assert response.status_code == 200, response.text
