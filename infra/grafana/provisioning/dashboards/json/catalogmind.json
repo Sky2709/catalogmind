@@ -1,0 +1,120 @@
+{
+  "uid": "catalogmind-overview",
+  "title": "CatalogMind",
+  "tags": ["catalogmind"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    { "type": "row", "title": "Search", "id": 100, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "collapsed": false, "panels": [] },
+    {
+      "id": 1, "type": "timeseries", "title": "Search stage latency (p50 / p95 / p99)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "catalogmind_prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "catalogmind_prometheus" }, "expr": "histogram_quantile(0.50, sum(rate(catalogmind_search_stage_latency_seconds_bucket[5m])) by (le, stage))", "legendFormat": "p50 {{stage}}", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "catalogmind_prometheus" }, "expr": "histogram_quantile(0.95, sum(rate(catalogmind_search_stage_latency_seconds_bucket[5m])) by (le, stage))", "legendFormat": "p95 {{stage}}", "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "catalogmind_prometheus" }, "expr": "histogram_quantile(0.99, sum(rate(catalogmind_search_stage_latency_seconds_bucket[5m])) by (le, stage))", "legendFormat": "p99 {{stage}}", "refId": "C" }
+      ]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "Search requests / sec (by rerank, query class)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "catalogmind_prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "catalogmind_prometheus" }, "expr": "sum(rate(catalogmind_search_requests_total[5m])) by (reranked, query_class)", "legendFormat": "reranked={{reranked}} class={{query_class}}", "refId": "A" }
+      ]
+    },
+    { "type": "row", "title": "Chat", "id": 200, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 }, "collapsed": false, "panels": [] },
+    {
+      "id": 3, "type": "timeseries", "title": "Chat stage latency (p50 / p95 / p99)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "catalogmind_prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "catalogmind_prometheus" }, "expr": "histogram_quantile(0.50, sum(rate(catalogmind_chat_stage_latency_seconds_bucket[5m])) by (le, stage))", "legendFormat": "p50 {{stage}}", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "catalogmind_prometheus" }, "expr": "histogram_quantile(0.95, sum(rate(catalogmind_chat_stage_latency_seconds_bucket[5m])) by (le, stage))", "legendFormat": "p95 {{stage}}", "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "catalogmind_prometheus" }, "expr": "histogram_quantile(0.99, sum(rate(catalogmind_chat_stage_latency_seconds_bucket[5m])) by (le, stage))", "legendFormat": "p99 {{stage}}", "refId": "C" }
+      ]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Chat requests / sec (by model, cache hit)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "catalogmind_prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "catalogmind_prometheus" }, "expr": "sum(rate(catalogmind_chat_requests_total[5m])) by (model, cache_hit)", "legendFormat": "{{model}} cache_hit={{cache_hit}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Token throughput (by model, token type)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "catalogmind_prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "catalogmind_prometheus" }, "expr": "sum(rate(catalogmind_chat_tokens_total[5m])) by (model, token_type)", "legendFormat": "{{model}} {{token_type}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Claim mismatch rate (by claim type)",
+      "description": "This project's own hallucination/groundedness regression signal - see app/llm/markers.py and app/obs/metrics.py.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "catalogmind_prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "catalogmind_prometheus" }, "expr": "sum(rate(catalogmind_chat_claim_mismatches_total[15m])) by (claim_type)", "legendFormat": "{{claim_type}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Tool call rate (by tool)",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 26 },
+      "datasource": { "type": "prometheus", "uid": "catalogmind_prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "catalogmind_prometheus" }, "expr": "sum(rate(catalogmind_chat_tool_calls_total[5m])) by (tool)", "legendFormat": "{{tool}}", "refId": "A" }
+      ]
+    },
+    { "type": "row", "title": "Cost (llm_usage, Postgres)", "id": 300, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 34 }, "collapsed": false, "panels": [] },
+    {
+      "id": 8, "type": "stat", "title": "Total spend (all time)",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 35 },
+      "datasource": { "type": "postgres", "uid": "catalogmind_postgres" },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 4 }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "postgres", "uid": "catalogmind_postgres" }, "format": "table", "rawSql": "SELECT COALESCE(SUM(cost_usd), 0) AS value FROM llm_usage", "refId": "A" }
+      ]
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "Daily spend by model",
+      "gridPos": { "h": 8, "w": 18, "x": 6, "y": 35 },
+      "datasource": { "type": "postgres", "uid": "catalogmind_postgres" },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "catalogmind_postgres" },
+          "format": "time_series",
+          "rawSql": "SELECT $__timeGroup(created_at, '1d') AS time, model, SUM(cost_usd) AS value FROM llm_usage WHERE $__timeFilter(created_at) GROUP BY 1, 2 ORDER BY 1",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 10, "type": "table", "title": "Token totals by model (all time)",
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 43 },
+      "datasource": { "type": "postgres", "uid": "catalogmind_postgres" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "catalogmind_postgres" },
+          "format": "table",
+          "rawSql": "SELECT model, SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens, SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_creation_tokens) AS cache_creation_tokens, SUM(cost_usd) AS cost_usd FROM llm_usage GROUP BY model ORDER BY model",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

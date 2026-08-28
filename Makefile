@@ -47,6 +47,15 @@ ps: ## Show stack status
 psql: ## Open a psql shell on the app database
 	$(COMPOSE) exec postgres psql -U catalogmind -d catalogmind
 
+## ---- observability ----
+dashboards: ## Start Prometheus + Grafana -> http://localhost:3000 (admin/admin)
+	$(COMPOSE) --profile observability up -d
+	@echo "Prometheus: http://localhost:9090"
+	@echo "Grafana:    http://localhost:3000  (admin/admin)"
+
+dashboards-down: ## Stop Prometheus + Grafana
+	$(COMPOSE) --profile observability down
+
 ## ---- app ----
 dev: ## Run the API with reload -> http://localhost:8000/docs
 	$(PY) -m uvicorn app.main:app --reload --port 8000
@@ -100,5 +109,6 @@ eval-gate: ## CI quality gate: fail if search quality regresses (small fixture, 
 eval-gate-baseline: ## Regenerate eval/ci_fixture/baseline.json - review the diff before committing
 	$(PY) -m eval.ci_quality_gate --write-baseline
 
-.PHONY: help install up wait down nuke logs ps psql dev migrate revision seed \
-        lint fmt typecheck test test-all check eval sweep eval-gate eval-gate-baseline
+.PHONY: help install up wait down nuke logs ps psql dashboards dashboards-down dev \
+        migrate revision seed lint fmt typecheck test test-all check eval sweep \
+        eval-gate eval-gate-baseline

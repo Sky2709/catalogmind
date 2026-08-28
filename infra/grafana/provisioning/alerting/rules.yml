@@ -1,0 +1,104 @@
+# Grafana unified alerting, provisioned as code - no separate Alertmanager container
+# (Grafana OSS has evaluated and managed alert state itself since v8). No contact
+# point/notification policy is wired here: that needs real Slack/email/PagerDuty
+# credentials this project doesn't have, and shouldn't fake. These rules evaluate and
+# show firing/pending state in the Grafana UI, which demonstrates the mechanism
+# honestly - wiring a real contact point is the natural next step, not done here.
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: catalogmind-alerts
+    folder: CatalogMind
+    interval: 1m
+    rules:
+      - uid: catalogmind-chat-p99-latency
+        title: Chat p99 latency high
+        condition: threshold
+        for: 5m
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: "Chat p99 latency (stage=total) has exceeded 10s over the last 5m."
+        data:
+          - refId: query
+            datasourceUid: catalogmind_prometheus
+            relativeTimeRange: { from: 300, to: 0 }
+            model:
+              refId: query
+              instant: true
+              expr: >-
+                histogram_quantile(0.99,
+                sum(rate(catalogmind_chat_stage_latency_seconds_bucket{stage="total"}[5m])) by (le))
+          - refId: threshold
+            datasourceUid: __expr__
+            model:
+              refId: threshold
+              type: threshold
+              expression: query
+              conditions:
+                - evaluator: { type: gt, params: [10] }
+
+      # This project's own hallucination/groundedness regression signal
+      # (app/llm/markers.py, app/obs/metrics.py) - already emitted, currently
+      # invisible unless someone remembers to check it manually.
+      - uid: catalogmind-claim-mismatch-rate
+        title: Chat claim-mismatch rate elevated
+        condition: threshold
+        for: 15m
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: "Unverified/mismatched claims are appearing in chat answers (any claim_type), sustained 15m."
+        data:
+          - refId: query
+            datasourceUid: catalogmind_prometheus
+            relativeTimeRange: { from: 900, to: 0 }
+            model:
+              refId: query
+              instant: true
+              expr: sum(rate(catalogmind_chat_claim_mismatches_total[15m]))
+          - refId: threshold
+            datasourceUid: __expr__
+            model:
+              refId: threshold
+              type: threshold
+              expression: query
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
+      # Ties directly to this project's stated cost discipline (~$15-40 total build
+      # budget, "check before launching any loop that makes thousands of calls") -
+      # queried straight off the llm_usage ledger (app/models/db.py), not a new
+      # Prometheus metric. $1/hr is an illustrative demo threshold, not a measured one -
+      # adjust to whatever a real hourly budget ceiling should be.
+      - uid: catalogmind-hourly-cost-burn
+        title: Hourly LLM cost burn high
+        condition: threshold
+        for: 5m
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: "LLM spend in the trailing hour has exceeded the demo threshold of $1."
+        data:
+          - refId: query
+            datasourceUid: catalogmind_postgres
+            relativeTimeRange: { from: 3600, to: 0 }
+            model:
+              refId: query
+              format: table
+              rawSql: "SELECT COALESCE(SUM(cost_usd), 0) AS value FROM llm_usage WHERE created_at > now() - interval '1 hour'"
+          - refId: threshold
+            datasourceUid: __expr__
+            model:
+              refId: threshold
+              type: threshold
+              expression: query
+              conditions:
+                - evaluator: { type: gt, params: [1.0] }

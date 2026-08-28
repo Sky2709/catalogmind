@@ -37,6 +37,7 @@ dependencies = [
     "prometheus-client>=0.21",
     "langgraph>=1.2.11",
     "anthropic[bedrock]>=1.0.0",
+    "langfuse>=4.14.5",
 ]
 
 [project.optional-dependencies]

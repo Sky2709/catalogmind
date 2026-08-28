@@ -15,14 +15,17 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
+from contextlib import contextmanager
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from langchain_core.runnables import RunnableConfig
+from langfuse import propagate_attributes
 from sse_starlette.sse import EventSourceResponse
 
 from app.deps import ScopedMerchant
 from app.llm.graph import get_chat_graph
+from app.obs.tracing import get_langfuse_client, langfuse_enabled
 from app.rate_limit import check_rate_limit
 from app.redis_client import get_redis_client
 from app.schemas import ChatRequest
@@ -55,6 +58,36 @@ async def enforce_chat_rate_limit(merchant: ScopedMerchant) -> None:
             ),
             headers={"Retry-After": str(result.retry_after_seconds)},
         )
+
+
+@contextmanager
+def _turn_trace(
+    tenant: str, conversation_id: str, thread_id: str, message: str
+) -> Iterator[None]:
+    """One Langfuse span per chat turn, grouped into one Langfuse *session* per
+    conversation via `propagate_attributes(session_id=...)` - without this, each
+    turn shows up as an unrelated top-level trace, only linked by a
+    `conversation_id` value buried in `metadata` that nothing in the UI groups on.
+    `thread_id` (tenant-namespaced), not the bare client-supplied
+    `conversation_id`, for the same reason `app.llm.graph`'s checkpointer key is
+    tenant-namespaced above - a session id is a display-grouping key, not a
+    security boundary, but there's no reason to trust an unscoped value here
+    either when a scoped one is already at hand. A no-op when tracing isn't
+    configured - see `app.obs.tracing`'s module docstring for why this manually
+    opens spans instead of using Langfuse's LangChain auto-instrumentation."""
+    if not langfuse_enabled():
+        yield
+        return
+    with (
+        propagate_attributes(session_id=thread_id),
+        get_langfuse_client().start_as_current_observation(
+            name="chat_turn",
+            as_type="span",
+            input=message,
+            metadata={"tenant": tenant, "conversation_id": conversation_id},
+        ),
+    ):
+        yield
 
 
 def _sse(event: dict) -> dict:
@@ -105,8 +138,9 @@ async def _stream(
     }
 
     try:
-        async for event in graph.astream(turn_input, config=config, stream_mode="custom"):
-            yield _sse(event)
+        with _turn_trace(merchant.tenant, conversation_id, thread_id, body.message):
+            async for event in graph.astream(turn_input, config=config, stream_mode="custom"):
+                yield _sse(event)
     except Exception as exc:  # noqa: BLE001 - the stream is already open; a client needs a
         # terminal event, not a dropped connection or a raw 500 that arrives too late to matter.
         logger.exception("chat turn failed mid-stream, tenant=%s", merchant.tenant)

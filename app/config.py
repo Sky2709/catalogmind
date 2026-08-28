@@ -69,6 +69,16 @@ class Settings(BaseSettings):
             "Bedrock silently."
         ),
     )
+    langfuse_public_key: str = Field("", validation_alias="LANGFUSE_PUBLIC_KEY")
+    langfuse_secret_key: str = Field("", validation_alias="LANGFUSE_SECRET_KEY")
+    langfuse_base_url: str = Field("", validation_alias="LANGFUSE_BASE_URL")
+    """Optional LLM tracing, added 2026-08-26. Empty by default - `app.obs.tracing`
+    treats an unset public/secret key pair as "tracing off" and no-ops, the same
+    graceful-degradation shape as `gender_filter_values`/`category_filter_values`
+    for a tenant with no taxonomy on file. Explicitly read here rather than left to
+    the `langfuse` SDK's own ambient-env-var auto-init, per this project's
+    "pydantic-settings, never a bare `os.environ` read outside this module" rule."""
+
     """Provider history, both changes deliberate and dated, not silent drift - see
     `PROGRESS.md`'s "Decisions already locked" section for the full reasoning each
     time:

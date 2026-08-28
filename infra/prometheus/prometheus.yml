@@ -1,0 +1,19 @@
+# Scrapes the API's /metrics endpoint (app/routers/metrics.py -> app/obs/metrics.py).
+#
+# One job, `localhost:8000`, covers both ways the API runs in this project - this
+# container uses `network_mode: host` (see infra/docker-compose.yml), so `localhost`
+# here is the WSL host's own localhost. `make dev`'s host-run uvicorn listens there
+# directly; `--profile app`'s containerized API also publishes 8000 onto the host
+# (`ports: "8000:8000"`), so it lands on the same target either way. Whichever mode
+# isn't running just shows the target "down" in Prometheus - visible and honest, the
+# same "no healthcheck that lies" philosophy infra/docker-compose.yml already applies
+# to Weaviate - never a silent gap.
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+scrape_configs:
+  - job_name: catalogmind_api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["localhost:8000"]

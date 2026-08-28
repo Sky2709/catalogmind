@@ -1,0 +1,12 @@
+# Dashboards live as versioned JSON in git (dashboards-as-code), not clicked together
+# in the UI where they'd vanish on container recreation.
+apiVersion: 1
+
+providers:
+  - name: catalogmind
+    folder: CatalogMind
+    type: file
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/json

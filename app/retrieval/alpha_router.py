@@ -197,12 +197,33 @@ def classify(query: str) -> Classification:
         scores[QueryClass.IDENTIFIER] += 1.0
         reasons.append("quoted exact phrase")
 
-    # `n_tokens` counts tokens, not characters - without the length check, a single
-    # very long run-on token (a pasted URL, a paste error with no spaces) reads as
-    # "short" by token count and gets routed keyword-heavy, the opposite of intent.
-    if 1 <= n_tokens <= 3 and len(q) <= 60 and not _EXPLORATORY_CUE.search(q):
-        scores[QueryClass.IDENTIFIER] += 0.6
-        reasons.append("very short query")
+    # Real, measured bug, fixed 2026-08-26: a blanket "short query -> lean
+    # IDENTIFIER" rule used to sit here, firing on *any* 1-3 token query with no
+    # exploratory language - not just real product codes. A previous session
+    # already found one consequence of this (`has_identifier_shaped_token()`'s
+    # own docstring, and `test_short_query_misclassified_as_identifier_still_
+    # has_no_token_signal` below) and worked around it for the reranking-skip
+    # decision specifically - but left the alpha consequence itself unfixed.
+    # Live-traced the real failure this caused: "samsung refrigerators" (2
+    # tokens, no digits/caps/quotes) landed IDENTIFIER, alpha 0.1 - and Weaviate's
+    # BM25 index has no stemming (`Tokenization.WORD`, confirmed against
+    # `weaviate_client.py`), so "refrigerators" scored zero keyword overlap
+    # against every title's "Refrigerator" - the real Samsung fridges scored
+    # 0.003-0.016 (buried under Samsung-branded phone accessories) at alpha 0.1,
+    # vs 0.97-0.99 at alpha 0.8 for the identical query. Real identifier queries
+    # never relied on this rule - they already score via `id_tokens`/`caps`/
+    # `_QUOTED` above, all more specific signals. Checked against the golden
+    # sets before removing: zero IDENTIFIER-class golden queries are 1-3 tokens
+    # (fashion's are bare 6+-digit SKUs, already caught by `id_tokens`;
+    # electronics/home-goods identifiers are 4+-word product-name phrases) - so
+    # removing this rule cannot regress a real identifier query. It was however
+    # actively *mis*classifying 9 of 15 golden short ATTRIBUTE queries
+    # (`GAP girls jeans`, `Titan analogue watch`, `HDMI cable 4K`, etc.) into
+    # IDENTIFIER before this fix - a real, currently-measured degradation, not
+    # just a future risk. Short, signal-less queries now correctly fall through
+    # to the "nothing fired" default below (ATTRIBUTE, the safe middle) instead
+    # of this rule forcing IDENTIFIER's alpha=0.1 on them. See PROGRESS.md's
+    # dated entry for the full measured before/after.
 
     # An ALLCAPS token that is not a common word reads as a model or brand code.
     caps = [t for t in tokens if len(t) > 2 and t.isupper()]

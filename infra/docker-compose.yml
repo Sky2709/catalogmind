@@ -8,6 +8,10 @@
 #
 #   docker compose -f infra/docker-compose.yml --profile offload up -d
 #       -> adds MinIO, required for Weaviate tenant OFFLOADED state.
+#
+#   docker compose -f infra/docker-compose.yml --profile observability up -d
+#       -> adds Prometheus + Grafana -> http://localhost:3000 (admin/admin). See
+#          `make dashboards`.
 
 name: catalogmind
 
@@ -131,6 +135,69 @@ services:
       retries: 12
       start_period: 30s
 
+  # ---- optional: only with `--profile observability` ----
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    profiles: ["observability"]
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # Bounded, deliberately: this is a portfolio machine, not a fleet - unbounded
+      # TSDB growth on a WSL2 disk is a real, avoidable failure mode, not a
+      # hypothetical one.
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=2GB
+    # Host networking, not a bridge + published port: `make dev` runs uvicorn bound to
+    # 127.0.0.1 (the right default - it shouldn't listen on every interface just so a
+    # container can reach it), which a bridge-network container cannot reach at all,
+    # loopback is per-network-namespace. Sharing the host's network namespace lets
+    # Prometheus hit that same 127.0.0.1:8000 directly, with no change to the API's
+    # bind address or exposure. (`--profile app`'s containerized API already publishes
+    # 8000 onto the host too, so this one target covers both run modes - see
+    # prometheus.yml.) Real Linux networking inside the WSL2 VM, not Docker Desktop, so
+    # host networking behaves exactly like bare-metal Linux here.
+    network_mode: host
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+
+  grafana:
+    image: grafana/grafana:13.2.0
+    profiles: ["observability"]
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Local-dev-only, hardcoded like every other credential in this file
+      # (POSTGRES_PASSWORD, Mongo/Redis with no auth at all) - this compose file's
+      # threat model is one developer's own machine, not a shared or internet-facing
+      # deployment. infra/helm is the actual production path.
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    extra_hosts:
+      # `prometheus` runs on host networking now (see that service's comment), so it
+      # has no bridge-network DNS name any more - Grafana's Prometheus datasource
+      # reaches it via the host instead.
+      - host.docker.internal:host-gateway
+    depends_on:
+      prometheus:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.25"
+
   # ---- optional: only with `--profile offload` ----
   minio:
     profiles: ["offload"]
@@ -157,3 +224,5 @@ volumes:
   mongo_data:
   redis_data:
   minio_data:
+  prometheus_data:
+  grafana_data:

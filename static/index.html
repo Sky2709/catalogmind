@@ -2,94 +2,568 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>CatalogMind — chat</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CatalogMind — grounded chat</title>
 <style>
-  :root { color-scheme: light dark; }
+  :root {
+    color-scheme: light;
+    --bg: #f3f4f8;
+    --surface: #ffffff;
+    --surface-2: #f7f8fb;
+    --border: #e3e5ec;
+    --text: #16181f;
+    --text-dim: #62677a;
+    --text-faint: #9095a6;
+    --accent: #4f46e5;
+    --accent-2: #6366f1;
+    --accent-contrast: #ffffff;
+    --accent-soft: #eef0ff;
+    --user-bubble: #4f46e5;
+    --user-text: #ffffff;
+    --ok: #0d9668;
+    --ok-soft: #e6f7f0;
+    --bad: #d1435b;
+    --bad-soft: #fdeef1;
+    --shadow: 0 1px 2px rgba(20, 22, 30, 0.04), 0 8px 24px rgba(20, 22, 30, 0.06);
+    --shadow-sm: 0 1px 2px rgba(20, 22, 30, 0.06);
+    --radius: 16px;
+    --radius-sm: 10px;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0e0f14;
+    --surface: #16181f;
+    --surface-2: #1c1f28;
+    --border: #2a2d38;
+    --text: #eef0f5;
+    --text-dim: #a5aab8;
+    --text-faint: #6d7284;
+    --accent: #818cf8;
+    --accent-2: #6366f1;
+    --accent-contrast: #0e0f14;
+    --accent-soft: #232544;
+    --user-bubble: #4f46e5;
+    --user-text: #ffffff;
+    --ok: #34d399;
+    --ok-soft: #103428;
+    --bad: #f87171;
+    --bad-soft: #3a1620;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px rgba(0, 0, 0, 0.35);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #0e0f14;
+      --surface: #16181f;
+      --surface-2: #1c1f28;
+      --border: #2a2d38;
+      --text: #eef0f5;
+      --text-dim: #a5aab8;
+      --text-faint: #6d7284;
+      --accent: #818cf8;
+      --accent-2: #6366f1;
+      --accent-contrast: #0e0f14;
+      --accent-soft: #232544;
+      --user-bubble: #4f46e5;
+      --user-text: #ffffff;
+      --ok: #34d399;
+      --ok-soft: #103428;
+      --bad: #f87171;
+      --bad-soft: #3a1620;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px rgba(0, 0, 0, 0.35);
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    max-width: 720px; margin: 2rem auto; padding: 0 1rem;
-    background: #fafafa; color: #1a1a1a;
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
-  h1 { font-size: 1.1rem; color: #555; }
-  #setup {
-    display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap;
+
+  .app { display: flex; flex-direction: column; height: 100vh; }
+
+  /* ---------- top bar ---------- */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.7rem 1.25rem; border-bottom: 1px solid var(--border);
+    background: var(--surface); flex-shrink: 0;
   }
-  #setup input {
-    flex: 1; min-width: 160px; padding: 0.4rem; border: 1px solid #ccc; border-radius: 4px;
+  .brand { display: flex; align-items: center; gap: 0.55rem; font-weight: 650; font-size: 0.98rem; }
+  .brand .mark {
+    width: 26px; height: 26px; border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), #a78bfa);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 0.85rem; font-weight: 700; flex-shrink: 0;
   }
-  #log { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1rem; }
-  .msg { padding: 0.6rem 0.9rem; border-radius: 10px; max-width: 85%; white-space: pre-wrap; }
-  .msg.user { background: #d6e8ff; align-self: flex-end; }
-  .msg.assistant { background: #fff; border: 1px solid #e0e0e0; align-self: flex-start; }
-  .status { font-size: 0.85rem; color: #888; font-style: italic; }
-  .products { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
-  .product {
-    border: 1px solid #ddd; border-radius: 8px; padding: 0.5rem 0.7rem; font-size: 0.85rem;
-    background: #f5f5f5; min-width: 140px;
+  .brand .tag { color: var(--text-faint); font-weight: 500; font-size: 0.78rem; margin-left: 0.15rem; }
+  .topbar-right { display: flex; align-items: center; gap: 0.4rem; }
+  .icon-btn {
+    display: flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; border-radius: 8px; border: 1px solid transparent;
+    background: transparent; color: var(--text-dim); cursor: pointer; font-size: 1rem;
+    transition: background 0.15s, color 0.15s;
   }
-  .product .sku { font-weight: 600; }
-  .product .oos { color: #b00; }
-  .product .thumb {
-    display: block; width: 100%; max-width: 160px; height: 120px; object-fit: cover;
-    border-radius: 6px; margin-bottom: 0.4rem; background: #eee;
+  .icon-btn:hover { background: var(--surface-2); color: var(--text); }
+  .docs-link {
+    font-size: 0.8rem; color: var(--text-dim); text-decoration: none;
+    padding: 0.35rem 0.7rem; border-radius: 8px; border: 1px solid var(--border);
+    transition: border-color 0.15s, color 0.15s;
   }
-  form { display: flex; gap: 0.5rem; }
-  form input { flex: 1; padding: 0.6rem; border: 1px solid #ccc; border-radius: 4px; }
-  form button { padding: 0.6rem 1rem; border: none; border-radius: 4px; background: #2563eb; color: #fff; cursor: pointer; }
-  form button:disabled { background: #999; cursor: not-allowed; }
-  .cache-badge { font-size: 0.7rem; color: #0a8; margin-left: 0.4rem; }
-  .error { color: #b00; }
+  .docs-link:hover { color: var(--accent); border-color: var(--accent); }
+
+  /* ---------- connection bar ---------- */
+  .connect-bar {
+    flex-shrink: 0; border-bottom: 1px solid var(--border); background: var(--surface-2);
+    overflow: hidden; transition: max-height 0.25s ease;
+  }
+  .connect-form {
+    display: flex; gap: 0.5rem; align-items: flex-start; flex-wrap: wrap;
+    padding: 0.65rem 1.25rem;
+    max-width: 820px; margin: 0 auto;
+  }
+  /* Fields align to the top (not center) because the tenant field can grow a
+     second row for the custom-tenant input - top alignment keeps every label on
+     one consistent line regardless of which field is currently taller. */
+  .connect-form .status-dot { margin-top: 0.95rem; }
+  .connect-form .connect-btn { margin-top: 1.05rem; }
+  .field { display: flex; flex-direction: column; gap: 0.15rem; flex: 1; min-width: 160px; }
+  .field label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-faint); font-weight: 600; }
+  .field input, .field select {
+    padding: 0.45rem 0.6rem; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--surface); color: var(--text); font-size: 0.85rem; outline: none;
+    font-family: inherit; transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .field input:focus, .field select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .field select { cursor: pointer; }
+  .field input.tenant-custom { margin-top: 0.35rem; }
+  .connect-btn {
+    padding: 0.5rem 0.9rem; border: none; border-radius: 8px; background: var(--accent);
+    color: var(--accent-contrast); font-size: 0.83rem; font-weight: 600; cursor: pointer;
+    white-space: nowrap; transition: filter 0.15s;
+  }
+  .connect-btn:hover { filter: brightness(1.08); }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); flex-shrink: 0; }
+  .status-dot.ok { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+  .connect-summary {
+    display: none; align-items: center; gap: 0.6rem; padding: 0.55rem 1.25rem;
+    max-width: 820px; margin: 0 auto; font-size: 0.83rem; color: var(--text-dim);
+  }
+  .connect-summary b { color: var(--text); font-weight: 650; }
+  .connect-summary button {
+    margin-left: auto; background: none; border: none; color: var(--accent);
+    font-size: 0.8rem; cursor: pointer; font-weight: 600; padding: 0.2rem 0.4rem;
+  }
+  .connect-bar.connected .connect-form { display: none; }
+  .connect-bar.connected .connect-summary { display: flex; }
+  .hint { font-size: 0.72rem; color: var(--text-faint); padding: 0 1.25rem 0.6rem; max-width: 820px; margin: 0 auto; }
+  .connect-bar.connected .hint { display: none; }
+
+  /* ---------- chat area ---------- */
+  .chat-main { flex: 1; display: flex; justify-content: center; min-height: 0; }
+  .chat-col { width: 100%; max-width: 820px; display: flex; flex-direction: column; min-height: 0; }
+  .chat-scroll { flex: 1; overflow-y: auto; padding: 1.25rem 1.25rem 0.5rem; }
+
+  .empty-state { text-align: center; padding: 3rem 1rem 1.5rem; color: var(--text-dim); }
+  .empty-state .mark-lg {
+    width: 52px; height: 52px; border-radius: 14px; margin: 0 auto 1rem;
+    background: linear-gradient(135deg, var(--accent), #a78bfa);
+    display: flex; align-items: center; justify-content: center; color: #fff;
+    font-size: 1.5rem; font-weight: 700; box-shadow: var(--shadow);
+  }
+  .empty-state h2 { font-size: 1.05rem; margin: 0 0 0.3rem; color: var(--text); font-weight: 650; }
+  .empty-state p { font-size: 0.85rem; margin: 0 0 1.2rem; }
+  .example-chips { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; }
+  .chip {
+    padding: 0.45rem 0.85rem; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text-dim); font-size: 0.8rem; cursor: pointer;
+    transition: border-color 0.15s, color 0.15s, transform 0.1s;
+  }
+  .chip:hover { border-color: var(--accent); color: var(--accent); transform: translateY(-1px); }
+
+  .log { display: flex; flex-direction: column; gap: 1rem; padding-bottom: 0.5rem; }
+
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .row { display: flex; gap: 0.6rem; align-items: flex-start; animation: rise 0.22s ease-out; }
+  .row.user { flex-direction: row-reverse; }
+  .avatar {
+    width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.75rem; font-weight: 700; margin-top: 0.1rem;
+  }
+  .avatar.assistant { background: linear-gradient(135deg, var(--accent), #a78bfa); color: #fff; }
+  .avatar.user { background: var(--surface-2); color: var(--text-dim); border: 1px solid var(--border); }
+
+  .bubble-col { display: flex; flex-direction: column; gap: 0.4rem; max-width: 78%; }
+  .row.user .bubble-col { align-items: flex-end; }
+
+  .msg {
+    padding: 0.65rem 0.95rem; border-radius: var(--radius-sm); font-size: 0.9rem;
+    line-height: 1.5; white-space: pre-wrap; word-wrap: break-word; position: relative;
+  }
+  .msg.user { background: var(--user-bubble); color: var(--user-text); border-bottom-right-radius: 3px; }
+  .msg.assistant { background: var(--surface); border: 1px solid var(--border); color: var(--text); border-bottom-left-radius: 3px; box-shadow: var(--shadow-sm); }
+  .msg.assistant.error { background: var(--bad-soft); border-color: var(--bad); color: var(--bad); }
+  .msg strong { font-weight: 700; }
+  .msg ul { margin: 0.3rem 0; padding-left: 1.15rem; }
+  .msg li { margin: 0.15rem 0; }
+  /* Streamed answer text renders its own line breaks explicitly (see
+     markdownLiteFor) - `normal` here overrides the `pre-wrap` above so a raw
+     newline adjacent to a <ul> doesn't add a second, redundant blank line. */
+  .msg.assistant .answer-body { white-space: normal; }
+
+  .msg-actions { display: flex; gap: 0.35rem; opacity: 0; transition: opacity 0.15s; }
+  .bubble-col:hover .msg-actions { opacity: 1; }
+  .msg-actions button {
+    border: none; background: none; color: var(--text-faint); cursor: pointer;
+    font-size: 0.7rem; padding: 0.1rem 0.3rem; border-radius: 6px;
+  }
+  .msg-actions button:hover { background: var(--surface-2); color: var(--text-dim); }
+
+  /* ---------- searching / status indicator ---------- */
+  .status-row { display: flex; gap: 0.6rem; align-items: center; animation: rise 0.2s ease-out; }
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    padding: 0.5rem 0.85rem; border-radius: var(--radius-sm);
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--text-dim); font-size: 0.83rem; box-shadow: var(--shadow-sm);
+  }
+  .dots { display: inline-flex; gap: 0.2rem; }
+  .dots span {
+    width: 5px; height: 5px; border-radius: 50%; background: var(--accent);
+    animation: pulse 1.1s infinite ease-in-out;
+  }
+  .dots span:nth-child(2) { animation-delay: 0.15s; }
+  .dots span:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes pulse { 0%, 80%, 100% { opacity: 0.25; transform: scale(0.8); } 40% { opacity: 1; transform: scale(1); } }
+
+  /* ---------- product cards ---------- */
+  .products { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.6rem; margin-top: 0.25rem; max-width: 78%; }
+  .product-card {
+    border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden;
+    background: var(--surface); display: flex; flex-direction: column; box-shadow: var(--shadow-sm);
+    transition: transform 0.12s, box-shadow 0.12s;
+  }
+  .product-card:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
+  .product-card.oos { opacity: 0.72; }
+  .thumb-wrap { width: 100%; height: 110px; background: var(--surface-2); display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .thumb-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .thumb-fallback { color: var(--text-faint); font-size: 1.4rem; font-weight: 700; }
+  .product-body { padding: 0.55rem 0.65rem 0.65rem; display: flex; flex-direction: column; gap: 0.3rem; }
+  .product-sku { font-size: 0.62rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-faint); letter-spacing: 0.02em; }
+  .product-title { font-size: 0.8rem; font-weight: 600; color: var(--text); line-height: 1.25; }
+  .product-brand { font-size: 0.72rem; color: var(--text-dim); }
+  .product-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 0.15rem; gap: 0.3rem; }
+  .product-price { font-size: 0.82rem; font-weight: 650; color: var(--text); }
+  .stock-badge { font-size: 0.65rem; font-weight: 650; padding: 0.14rem 0.4rem; border-radius: 999px; white-space: nowrap; }
+  .stock-badge.in { color: var(--ok); background: var(--ok-soft); }
+  .stock-badge.out { color: var(--bad); background: var(--bad-soft); }
+  .cache-badge {
+    grid-column: 1 / -1; display: inline-flex; align-items: center; gap: 0.3rem; width: fit-content;
+    font-size: 0.7rem; color: var(--accent); background: var(--accent-soft);
+    padding: 0.25rem 0.55rem; border-radius: 999px; font-weight: 600;
+  }
+
+  /* ---------- composer ---------- */
+  .composer-wrap { flex-shrink: 0; padding: 0.75rem 1.25rem 1.1rem; }
+  form.composer {
+    display: flex; gap: 0.5rem; align-items: flex-end;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 0.5rem 0.5rem 0.5rem 0.9rem; box-shadow: var(--shadow-sm);
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  form.composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  form.composer textarea {
+    flex: 1; border: none; outline: none; resize: none; background: transparent;
+    color: var(--text); font-size: 0.9rem; font-family: inherit; line-height: 1.4;
+    max-height: 140px; padding: 0.4rem 0;
+  }
+  form.composer textarea::placeholder { color: var(--text-faint); }
+  .send-btn {
+    width: 34px; height: 34px; border-radius: 10px; border: none; cursor: pointer;
+    background: var(--accent); color: var(--accent-contrast); flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    transition: filter 0.15s, transform 0.1s;
+  }
+  .send-btn:hover:not(:disabled) { filter: brightness(1.1); }
+  .send-btn:active:not(:disabled) { transform: scale(0.94); }
+  .send-btn:disabled { background: var(--border); color: var(--text-faint); cursor: not-allowed; }
+  .composer-foot { text-align: center; font-size: 0.68rem; color: var(--text-faint); margin-top: 0.5rem; }
+  .composer-foot a { color: var(--text-faint); }
+
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  @media (max-width: 560px) {
+    .products { max-width: 100%; }
+    .bubble-col { max-width: 88%; }
+    .connect-form { flex-direction: column; align-items: stretch; }
+  }
 </style>
 </head>
 <body>
-  <h1>CatalogMind — grounded chat (SSE demo, not the primary interface — see Swagger at /docs)</h1>
-  <div id="setup">
-    <input id="tenant" placeholder="merchant tenant slug (e.g. demo-fashion-in)" />
-    <input id="apiKey" placeholder="X-API-Key" type="password" />
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="mark">CM</span>
+      CatalogMind <span class="tag">grounded chat</span>
+    </div>
+    <div class="topbar-right">
+      <a class="docs-link" href="/docs" target="_blank" rel="noopener">API docs ↗</a>
+      <button id="themeToggle" class="icon-btn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button>
+    </div>
+  </header>
+
+  <div class="connect-bar" id="connectBar">
+    <form class="connect-form" id="connectForm">
+      <span class="status-dot" id="statusDot"></span>
+      <div class="field">
+        <label for="tenant">Merchant tenant</label>
+        <select id="tenant">
+          <option value="demo-fashion-in">demo-fashion-in — Indian Fashion (Myntra)</option>
+          <option value="demo-electronics-in">demo-electronics-in — Electronics (Amazon India)</option>
+          <option value="demo-home-goods">demo-home-goods — Home Goods</option>
+          <option value="__custom__">Custom tenant…</option>
+        </select>
+        <input id="tenantCustom" class="tenant-custom" placeholder="tenant slug" autocomplete="off" style="display:none" />
+      </div>
+      <div class="field">
+        <label for="apiKey">API key</label>
+        <input id="apiKey" placeholder="X-API-Key" type="password" autocomplete="off" />
+      </div>
+      <button class="connect-btn" id="connectBtn" type="button">Connect</button>
+    </form>
+    <div class="connect-summary" id="connectSummary">
+      <span class="status-dot ok"></span>
+      Connected to <b id="connectedTenant"></b>
+      <button type="button" id="changeConn">Change</button>
+    </div>
+    <div class="hint">No merchant yet? Provision one via <code>POST /v1/merchants</code> in the Swagger docs, then paste the tenant + key here.</div>
   </div>
-  <div id="log"></div>
-  <form id="form">
-    <input id="message" placeholder="Ask about a product..." autocomplete="off" required />
-    <button id="send" type="submit">Send</button>
-  </form>
+
+  <div class="chat-main">
+    <div class="chat-col">
+      <div class="chat-scroll" id="chatScroll" aria-live="polite">
+        <div class="empty-state" id="emptyState">
+          <div class="mark-lg">CM</div>
+          <h2>Ask about this merchant's catalog</h2>
+          <p>Answers are grounded and cited — every claim traces back to a real product.</p>
+          <div class="example-chips">
+            <button class="chip" type="button" data-q="What's in stock right now?">What's in stock right now?</button>
+            <button class="chip" type="button" data-q="What's your cheapest item?">What's your cheapest item?</button>
+            <button class="chip" type="button" data-q="Recommend something popular.">Recommend something popular</button>
+            <button class="chip" type="button" data-q="Do you have anything on sale?">Anything on sale?</button>
+          </div>
+        </div>
+        <div class="log" id="log"></div>
+      </div>
+      <div class="composer-wrap">
+        <form id="form" class="composer">
+          <textarea id="message" rows="1" placeholder="Ask about a product..." required></textarea>
+          <button class="send-btn" id="send" type="submit" aria-label="Send" title="Send">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+          </button>
+        </form>
+        <div class="composer-foot">Demo surface only — the primary interface is the API itself (<a href="/docs" target="_blank" rel="noopener">Swagger →</a>)</div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
+const root = document.documentElement;
+const chatScroll = document.getElementById("chatScroll");
 const log = document.getElementById("log");
+const emptyState = document.getElementById("emptyState");
 const form = document.getElementById("form");
 const messageInput = document.getElementById("message");
 const sendButton = document.getElementById("send");
-const tenantInput = document.getElementById("tenant");
+const tenantSelect = document.getElementById("tenant");
+const tenantCustom = document.getElementById("tenantCustom");
 const apiKeyInput = document.getElementById("apiKey");
+const CUSTOM_TENANT = "__custom__";
+const KNOWN_TENANTS = ["demo-fashion-in", "demo-electronics-in", "demo-home-goods"];
+
+// The tenant dropdown only lists the 3 named demo catalogs (`scripts/seed.py`) -
+// there's no safe way to list *every* real tenant here, since `GET /v1/merchants`
+// is admin-token-gated (`app/routers/merchants.py::require_admin`) and this is a
+// static page with no server-side secret to hold that token. "Custom tenant…"
+// keeps ad-hoc/test merchants (anything provisioned by hand via Swagger) reachable
+// without ever embedding an operator credential client-side.
+function getTenant() {
+  return tenantSelect.value === CUSTOM_TENANT ? tenantCustom.value.trim() : tenantSelect.value;
+}
+function setTenant(value) {
+  if (KNOWN_TENANTS.includes(value)) {
+    tenantSelect.value = value;
+    tenantCustom.style.display = "none";
+  } else {
+    tenantSelect.value = CUSTOM_TENANT;
+    tenantCustom.style.display = "block";
+    tenantCustom.value = value || "";
+  }
+}
+tenantSelect.addEventListener("change", () => {
+  tenantCustom.style.display = tenantSelect.value === CUSTOM_TENANT ? "block" : "none";
+  if (tenantSelect.value === CUSTOM_TENANT) tenantCustom.focus();
+});
+const connectBar = document.getElementById("connectBar");
+const connectBtn = document.getElementById("connectBtn");
+const changeConn = document.getElementById("changeConn");
+const connectedTenant = document.getElementById("connectedTenant");
+const statusDot = document.getElementById("statusDot");
+const themeToggle = document.getElementById("themeToggle");
+
+// --- theme ---
+function applyTheme(mode) {
+  if (mode === "light" || mode === "dark") root.setAttribute("data-theme", mode);
+  else root.removeAttribute("data-theme");
+  themeToggle.textContent = (root.getAttribute("data-theme") === "dark") ? "☀" : "◐";
+}
+applyTheme(localStorage.getItem("cm_theme") || "");
+themeToggle.addEventListener("click", () => {
+  const current = root.getAttribute("data-theme")
+    || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  const next = current === "dark" ? "light" : "dark";
+  localStorage.setItem("cm_theme", next);
+  applyTheme(next);
+});
 
 // Convenience only - not meant for anything beyond a local demo.
-tenantInput.value = localStorage.getItem("cm_tenant") || "";
+setTenant(localStorage.getItem("cm_tenant") || "demo-fashion-in");
 apiKeyInput.value = localStorage.getItem("cm_api_key") || "";
 let conversationId = null;
+let connected = false;
+
+function markConnected() {
+  if (connected) return;
+  connected = true;
+  connectBar.classList.add("connected");
+  connectedTenant.textContent = getTenant();
+  statusDot.classList.add("ok");
+}
+function markDisconnected() {
+  connected = false;
+  connectBar.classList.remove("connected");
+  statusDot.classList.remove("ok");
+}
+connectBtn.addEventListener("click", () => {
+  if (!getTenant() || !apiKeyInput.value.trim()) {
+    (tenantSelect.value === CUSTOM_TENANT ? tenantCustom : apiKeyInput).focus();
+    return;
+  }
+  localStorage.setItem("cm_tenant", getTenant());
+  localStorage.setItem("cm_api_key", apiKeyInput.value);
+  markConnected();
+  messageInput.focus();
+});
+changeConn.addEventListener("click", markDisconnected);
+if (getTenant() && apiKeyInput.value) markConnected();
+
+function hideEmptyState() {
+  if (emptyState.style.display !== "none") emptyState.style.display = "none";
+}
+
+function scrollToBottom() {
+  chatScroll.scrollTop = chatScroll.scrollHeight;
+}
+
+function addRow(role, textOrEl) {
+  hideEmptyState();
+  const row = document.createElement("div");
+  row.className = "row " + role;
+  const avatar = document.createElement("div");
+  avatar.className = "avatar " + role;
+  avatar.textContent = role === "user" ? "U" : "AI";
+  const col = document.createElement("div");
+  col.className = "bubble-col";
+  row.appendChild(avatar);
+  row.appendChild(col);
+  log.appendChild(row);
+  scrollToBottom();
+  return col;
+}
 
 function addMessage(role, text) {
+  const col = addRow(role === "user" ? "user" : "assistant", null);
   const el = document.createElement("div");
-  el.className = "msg " + role;
+  el.className = "msg " + (role === "assistant error" ? "assistant error" : role);
   el.textContent = text;
-  log.appendChild(el);
-  el.scrollIntoView({ behavior: "smooth" });
+  col.appendChild(el);
+  scrollToBottom();
   return el;
 }
 
-// A dedicated child <span> for the streamed answer text, kept separate from the
+// A dedicated child <div> for the streamed answer text, kept separate from the
 // product cards appended later - a real bug caught by testing against a cache-hit
 // response (where `citations` arrives before any `token` event): appending text
 // via `el.textContent += ...` reassigns *all* of an element's children, silently
-// deleting any product cards already appended as siblings. Targeting a span that
-// only ever holds text avoids the whole class of bug rather than just this instance
-// of it.
+// deleting any product cards already appended as siblings. Targeting a container that
+// only ever holds the rendered answer avoids the whole class of bug rather than just
+// this instance of it.
 function addAssistantMessage() {
+  const col = addRow("assistant", null);
   const el = document.createElement("div");
   el.className = "msg assistant";
-  const textSpan = document.createElement("span");
+  const textSpan = document.createElement("div");
+  textSpan.className = "answer-body";
   el.appendChild(textSpan);
-  log.appendChild(el);
-  el.scrollIntoView({ behavior: "smooth" });
-  return { el, textSpan };
+  const actions = document.createElement("div");
+  actions.className = "msg-actions";
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.textContent = "Copy";
+  // `state.plainText` tracks the marker-stripped answer independently of the
+  // rendered markup below - `textSpan.textContent` would work too, but once a
+  // bullet list renders as real <li> elements, textContent concatenates their
+  // text with no separator (no newline the way a visual line break implies),
+  // running list items together for anyone who copies the answer.
+  const state = { col, el, textSpan, plainText: "" };
+  copyBtn.addEventListener("click", () => {
+    try {
+      navigator.clipboard.writeText(state.plainText);
+      copyBtn.textContent = "Copied";
+      setTimeout(() => { copyBtn.textContent = "Copy"; }, 1200);
+    } catch (err) { /* clipboard unavailable - not worth surfacing to the user */ }
+  });
+  actions.appendChild(copyBtn);
+  col.appendChild(el);
+  col.appendChild(actions);
+  scrollToBottom();
+  return state;
+}
+
+function addStatusRow(text) {
+  hideEmptyState();
+  const row = document.createElement("div");
+  row.className = "status-row";
+  const avatar = document.createElement("div");
+  avatar.className = "avatar assistant";
+  avatar.textContent = "AI";
+  const pill = document.createElement("div");
+  pill.className = "status-pill";
+  const dots = document.createElement("span");
+  dots.className = "dots";
+  dots.innerHTML = "<span></span><span></span><span></span>";
+  const label = document.createElement("span");
+  label.textContent = text;
+  pill.appendChild(label);
+  pill.appendChild(dots);
+  row.appendChild(avatar);
+  row.appendChild(pill);
+  log.appendChild(row);
+  scrollToBottom();
+  return row;
 }
 
 // Product fields (title, brand, image_url, ...) come from a merchant's own catalog
@@ -125,7 +599,52 @@ function displayTextFor(rawAnswer) {
     .replace(/\[\[STAT:(-?\d+(?:\.\d+)?)\]\]/g, "$1");
 }
 
-function renderProducts(container, products, cached) {
+// Claude occasionally formats an answer with plain markdown (**bold**, "- " bullet
+// lists) - live-observed, not assumed, mostly on clarifying-question turns rather
+// than cited product answers. Renders that formatting instead of showing the raw
+// asterisks, but ONLY as a thin layer on top of already-escaped text: `escaped` has
+// already run through `escapeHtml`, so every tag this function introduces wraps
+// content that can no longer contain a real `<`/`>`/quote - it can add markup, never
+// interpret user/catalog data as markup. An unclosed `**` (still streaming in) is
+// left as literal asterisks for that render and resolves once the closing `**`
+// arrives, same tolerance already accepted for marker parsing above.
+function markdownLiteFor(escaped) {
+  const withBold = escaped.replace(/\*\*([^\n*]+?)\*\*/g, "<strong>$1</strong>");
+  const lines = withBold.split("\n");
+  const blocks = [];
+  let currentList = null;
+  for (const line of lines) {
+    const bullet = line.match(/^(?:-|\*)\s+(.*)$/);
+    if (bullet) {
+      if (!currentList) { currentList = []; blocks.push({ type: "ul", items: currentList }); }
+      currentList.push(bullet[1]);
+    } else {
+      currentList = null;
+      blocks.push({ type: "line", text: line });
+    }
+  }
+  // Rendered into a `white-space: normal` container (not `pre-wrap`, unlike the plain
+  // `.msg` bubbles) so every line break is explicit here rather than inferred from
+  // raw "\n" characters - a literal "\n" sitting next to a block-level <ul> would
+  // otherwise render as a *second*, unwanted blank line on top of the list's own
+  // margin. `atBlockStart` suppresses the <br> that would normally open a line when
+  // the previous block already ended on a block boundary (the very start, or a <ul>).
+  let html = "";
+  let atBlockStart = true;
+  for (const block of blocks) {
+    if (block.type === "ul") {
+      html += "<ul>" + block.items.map((item) => `<li>${item}</li>`).join("") + "</ul>";
+      atBlockStart = true;
+    } else {
+      if (!atBlockStart) html += "<br>";
+      html += block.text;
+      atBlockStart = false;
+    }
+  }
+  return html;
+}
+
+function renderProducts(col, products, cached) {
   // A refusal turn sends an empty `products` list on purpose (see
   // `app/llm/graph.py::validate_and_store`) - nothing to show, so skip
   // appending an empty card row rather than leaving a stray gap in the layout.
@@ -134,27 +653,49 @@ function renderProducts(container, products, cached) {
   wrap.className = "products";
   for (const p of products) {
     const card = document.createElement("div");
-    card.className = "product";
-    const stock = p.in_stock === "False" || p.in_stock === false ? '<span class="oos">out of stock</span>' : "in stock";
+    const outOfStock = p.in_stock === "False" || p.in_stock === false;
+    card.className = "product-card" + (outOfStock ? " oos" : "");
+    const thumb = document.createElement("div");
+    thumb.className = "thumb-wrap";
     // A dead or missing image is expected (not every catalog has one, e.g. the
     // demo home-goods feed has no image column at all) - drop the element on
     // load failure rather than showing a broken-image icon.
-    const img = isSafeImageUrl(p.image_url)
-      ? `<img class="thumb" src="${escapeHtml(p.image_url)}" alt="${escapeHtml(p.title || "")}" loading="lazy" onerror="this.remove()" />`
-      : "";
-    card.innerHTML =
-      img +
-      `<div class="sku">${escapeHtml(p.sku)}</div>${escapeHtml(p.title || "")}<br/>` +
-      `${p.price ? escapeHtml(p.price) + " " + escapeHtml(p.currency || "") : ""}<br/>${stock}`;
+    if (isSafeImageUrl(p.image_url)) {
+      const img = document.createElement("img");
+      img.src = p.image_url;
+      img.alt = p.title || "";
+      img.loading = "lazy";
+      img.addEventListener("error", () => img.remove());
+      thumb.appendChild(img);
+    } else {
+      const fallback = document.createElement("span");
+      fallback.className = "thumb-fallback";
+      fallback.textContent = (p.title || p.sku || "?").trim().charAt(0).toUpperCase();
+      thumb.appendChild(fallback);
+    }
+    const body = document.createElement("div");
+    body.className = "product-body";
+    const priceText = p.price ? `${escapeHtml(p.price)} ${escapeHtml(p.currency || "")}`.trim() : "";
+    body.innerHTML =
+      `<div class="product-sku">${escapeHtml(p.sku)}</div>` +
+      `<div class="product-title">${escapeHtml(p.title || "")}</div>` +
+      (p.brand ? `<div class="product-brand">${escapeHtml(p.brand)}</div>` : "") +
+      `<div class="product-foot">` +
+      `<span class="product-price">${priceText}</span>` +
+      `<span class="stock-badge ${outOfStock ? "out" : "in"}">${outOfStock ? "Out of stock" : "In stock"}</span>` +
+      `</div>`;
+    card.appendChild(thumb);
+    card.appendChild(body);
     wrap.appendChild(card);
   }
   if (cached) {
     const badge = document.createElement("span");
     badge.className = "cache-badge";
-    badge.textContent = "⚡ served from cache";
+    badge.textContent = "⚡ Served from cache";
     wrap.appendChild(badge);
   }
-  container.appendChild(wrap);
+  col.appendChild(wrap);
+  scrollToBottom();
 }
 
 // The browser's native EventSource only supports GET with no custom headers, so a
@@ -162,7 +703,7 @@ function renderProducts(container, products, cached) {
 // stream and split on the blank-line SSE event delimiter ourselves.
 async function streamChat(message) {
   const response = await fetch(
-    `/v1/merchants/${encodeURIComponent(tenantInput.value)}/chat`,
+    `/v1/merchants/${encodeURIComponent(getTenant())}/chat`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-API-Key": apiKeyInput.value },
@@ -177,8 +718,8 @@ async function streamChat(message) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let statusEl = null;
-  let answer = null; // { el, textSpan }, created lazily on the first token/citations event
+  let statusRow = null;
+  let answer = null; // { col, el, textSpan }, created lazily on the first token/citations event
   let rawAnswer = ""; // the real, unmodified text (markers included) - textSpan shows the display transform
 
   while (true) {
@@ -220,14 +761,15 @@ async function streamChat(message) {
         const toolInput = payload.input || {};
         let statusText;
         if (payload.tool === "get_catalog_stats") {
-          statusText = "📊 Checking catalog stats...";
+          statusText = "Checking catalog stats…";
         } else if (payload.tool === "get_product_detail") {
           const skus = (toolInput.skus || []).join(", ");
-          statusText = `🔎 Looking up ${skus || "product"}...`;
+          statusText = `Looking up ${skus || "product"}…`;
         } else {
-          statusText = `🔍 Searching catalog for "${toolInput.query || ""}"...`;
+          statusText = `Searching catalog for "${toolInput.query || ""}"…`;
         }
-        statusEl = addMessage("status", statusText);
+        if (statusRow) statusRow.remove();
+        statusRow = addStatusRow(statusText);
         // Real bug, live-observed (2026-08-22): Claude often narrates before
         // calling a tool ("I'll search for iPhone 17 phone covers in the
         // catalog.") in the same answer bubble as its eventual real answer.
@@ -240,30 +782,60 @@ async function streamChat(message) {
         // the buffer so the *next* segment's own marker is genuinely leading.
         rawAnswer = "";
       } else if (eventName === "token") {
-        if (statusEl) { statusEl.remove(); statusEl = null; }
+        if (statusRow) { statusRow.remove(); statusRow = null; }
         if (!answer) answer = addAssistantMessage();
         rawAnswer += payload.text;
-        answer.textSpan.textContent = displayTextFor(rawAnswer);
+        answer.plainText = displayTextFor(rawAnswer);
+        answer.textSpan.innerHTML = markdownLiteFor(escapeHtml(answer.plainText));
+        scrollToBottom();
       } else if (eventName === "citations") {
-        if (statusEl) { statusEl.remove(); statusEl = null; }
+        if (statusRow) { statusRow.remove(); statusRow = null; }
         if (!answer) answer = addAssistantMessage();
-        renderProducts(answer.el, payload.products, payload.cached);
+        renderProducts(answer.col, payload.products, payload.cached);
       } else if (eventName === "error") {
+        if (statusRow) { statusRow.remove(); statusRow = null; }
         addMessage("assistant error", `Error: ${payload.message}`);
       }
     }
   }
 }
 
+function autoGrow() {
+  messageInput.style.height = "auto";
+  messageInput.style.height = Math.min(messageInput.scrollHeight, 140) + "px";
+}
+messageInput.addEventListener("input", autoGrow);
+messageInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    form.requestSubmit();
+  }
+});
+
+document.querySelectorAll(".chip").forEach((chip) => {
+  chip.addEventListener("click", () => {
+    messageInput.value = chip.dataset.q;
+    autoGrow();
+    form.requestSubmit();
+  });
+});
+
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   const message = messageInput.value.trim();
   if (!message) return;
-  localStorage.setItem("cm_tenant", tenantInput.value);
+  if (!getTenant() || !apiKeyInput.value.trim()) {
+    connectBar.classList.remove("connected");
+    (tenantSelect.value === CUSTOM_TENANT ? tenantCustom : apiKeyInput).focus();
+    return;
+  }
+  localStorage.setItem("cm_tenant", getTenant());
   localStorage.setItem("cm_api_key", apiKeyInput.value);
+  markConnected();
 
   addMessage("user", message);
   messageInput.value = "";
+  autoGrow();
   sendButton.disabled = true;
   try {
     await streamChat(message);
@@ -271,6 +843,7 @@ form.addEventListener("submit", async (e) => {
     addMessage("assistant error", `Error: ${err}`);
   } finally {
     sendButton.disabled = false;
+    messageInput.focus();
   }
 });
 </script>

@@ -81,6 +81,7 @@ from app.obs.metrics import (
     observe_chat_tool_call,
     observe_claim_mismatch,
 )
+from app.obs.tracing import get_langfuse_client, langfuse_enabled
 from app.redis_client import get_redis_client
 from app.retrieval.base import SearchFilters, SearchRequest
 from app.retrieval.hybrid import get_retriever
@@ -165,6 +166,40 @@ class ChatState(TypedDict):
 
 def _block_type(block: Any) -> str | None:
     return block.get("type") if isinstance(block, dict) else getattr(block, "type", None)
+
+
+def _block_field(block: Any, name: str) -> Any:
+    return block.get(name) if isinstance(block, dict) else getattr(block, name, None)
+
+
+def _trace_input(messages: list[MessageParam]) -> list[dict[str, str]]:
+    """A minimal, human-readable version of `messages` for the Langfuse
+    generation's `input` - the raw content blocks (real SDK response objects
+    mixed with plain dicts, same shape `_sanitize_messages_for_request` already
+    handles via `_block_type`) carry SDK-internal fields (`citations`,
+    `parsed_output`, etc.) that make a trace noisy to skim without adding
+    anything a human reading it needs. Never sent to the model - trace-only."""
+    trace_messages: list[dict[str, str]] = []
+    for message in messages:
+        content = message["content"]
+        if isinstance(content, str):
+            trace_messages.append({"role": message["role"], "content": content})
+            continue
+        parts: list[str] = []
+        for block in content:
+            block_type = _block_type(block)
+            if block_type == "text":
+                parts.append(str(_block_field(block, "text") or ""))
+            elif block_type == "tool_use":
+                name = _block_field(block, "name")
+                tool_input = _block_field(block, "input")
+                parts.append(f"[tool_call: {name}({tool_input})]")
+            elif block_type == "tool_result":
+                parts.append("[tool_result]")
+            else:
+                parts.append(f"[{block_type}]")
+        trace_messages.append({"role": message["role"], "content": " ".join(parts)})
+    return trace_messages
 
 
 def _sanitize_messages_for_request(messages: list[MessageParam]) -> list[MessageParam]:
@@ -433,7 +468,38 @@ async def agent(state: ChatState) -> dict[str, Any]:
     # one bad call cost a caller three minutes before finally failing; two is
     # still a real retry, not just giving up instantly, without compounding a slow
     # failure into a very slow one.
-    turn = await with_retry(_call, retryable=ANTHROPIC_TRANSIENT_ERRORS, attempts=2)
+    # One Langfuse "generation" per real Bedrock call - see `app.obs.tracing`'s
+    # module docstring for why this is opened manually rather than via Langfuse's
+    # LangChain auto-instrumentation, which has nothing to attach to on a raw
+    # `anthropic` SDK call. Nests under the `chat_turn` span opened in
+    # `app/routers/chat.py` via OTel context propagation, not a second root trace.
+    if langfuse_enabled():
+        with get_langfuse_client().start_as_current_observation(
+            name="bedrock_call",
+            as_type="generation",
+            model=model,
+            input=_trace_input(stream_kwargs["messages"]),
+            metadata={
+                "tenant": state["tenant"],
+                "conversation_id": state["conversation_id"],
+                "tool_call_round": state["tool_call_rounds"],
+                "tier": decision.tier,
+            },
+        ) as gen:
+            turn = await with_retry(_call, retryable=ANTHROPIC_TRANSIENT_ERRORS, attempts=2)
+            usage_details = (
+                {
+                    "input": turn.usage.input_tokens,
+                    "output": turn.usage.output_tokens,
+                    "cache_read": turn.usage.cache_read_input_tokens or 0,
+                    "cache_creation": turn.usage.cache_creation_input_tokens or 0,
+                }
+                if turn.usage is not None
+                else None
+            )
+            gen.update(output=turn.text, usage_details=usage_details)
+    else:
+        turn = await with_retry(_call, retryable=ANTHROPIC_TRANSIENT_ERRORS, attempts=2)
     if turn.usage is not None:
         observe_chat_tokens(
             model=model,

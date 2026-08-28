@@ -24,12 +24,28 @@ IDENTIFIER_QUERIES = [
     "DW-4402B",
     "A1502",
     "55X900H",
-    "iPhone 15",
     "WH-1000XM5",
     "sony wh1000xm5",
     "LG 55UP7500",
     '"Air Max 90"',
 ]
+
+# "iPhone 15" used to be in `IDENTIFIER_QUERIES` above, purely via the blanket
+# "1-3 tokens -> lean IDENTIFIER" rule removed 2026-08-26 (see `classify()`'s
+# comment). It has no *other* identifier signal - "iPhone" isn't ALLCAPS, "15"
+# isn't a 6+-digit bare number or a hyphenated code - so it's structurally
+# identical to the false positives that rule caused ("GAP girls jeans", "Titan
+# analogue watch"). Accepted as a known, narrow tradeoff rather than adding a
+# more specific "brand-cased-word + bare short number" rule to reclaim it:
+# that shape overlaps with real false-positive cases already covered by
+# `has_identifier_shaped_token`'s own test list ("size 10 shoes"), and this
+# exact pattern has zero representation in any of the three real golden query
+# sets (checked directly), so a targeted rule would be un-measurable against
+# real data - exactly what this project's "alpha values are measured, not
+# guessed" rule argues against. Landing in ATTRIBUTE (alpha 0.5, the safe
+# middle) is a mild quality tradeoff for this one pattern, not the catastrophic
+# one the removed rule caused for actual natural-language queries.
+_BRAND_PLUS_BARE_NUMBER_ACCEPTED_TRADEOFF = "iPhone 15"
 
 # --- exploratory: intent without catalog vocabulary, vector should dominate ---
 EXPLORATORY_QUERIES = [
@@ -56,6 +72,14 @@ ATTRIBUTE_QUERIES = [
 @pytest.mark.parametrize("query", IDENTIFIER_QUERIES)
 def test_identifier_queries_classified(query: str) -> None:
     assert classify(query).query_class is QueryClass.IDENTIFIER
+
+
+def test_brand_plus_bare_number_accepted_tradeoff() -> None:
+    """Pins the one real, accepted regression from removing the blanket short-query
+    rule - see `_BRAND_PLUS_BARE_NUMBER_ACCEPTED_TRADEOFF`'s comment above for why
+    this is a deliberate tradeoff, not an oversight."""
+    result = classify(_BRAND_PLUS_BARE_NUMBER_ACCEPTED_TRADEOFF)
+    assert result.query_class is QueryClass.ATTRIBUTE
 
 
 @pytest.mark.parametrize("query", EXPLORATORY_QUERIES)
@@ -234,12 +258,27 @@ def test_has_identifier_shaped_token_false_without_a_real_code_token(query: str)
     assert not has_identifier_shaped_token(query)
 
 
-def test_short_query_misclassified_as_identifier_still_has_no_token_signal() -> None:
-    """Pins the specific false positive that motivated this function: `classify()`
-    puts this in IDENTIFIER (nothing else fires for a short query), but there is no
-    actual product-code token in it - `hybrid.py` must not skip reranking here."""
-    assert classify("hiking boots").query_class is QueryClass.IDENTIFIER
+def test_short_natural_language_query_has_no_token_signal() -> None:
+    """`has_identifier_shaped_token` still correctly reports no real product-code
+    token here - `hybrid.py` must not skip reranking for a short natural-language
+    query just because it's short."""
     assert not has_identifier_shaped_token("hiking boots")
+
+
+def test_short_query_no_longer_misclassified_as_identifier() -> None:
+    """The classifier-level fix, 2026-08-26: a blanket "1-3 tokens -> lean
+    IDENTIFIER" rule used to put a plain short natural-language query like this in
+    IDENTIFIER (alpha 0.1) purely for being short - `has_identifier_shaped_token`
+    already correctly said "no real code token here" (test above), but nothing
+    read that signal for alpha selection, only for the reranking-skip decision.
+    Live-traced real failure this caused in production: "samsung refrigerators"
+    (2 tokens) landed IDENTIFIER, and Weaviate's unstemmed BM25 index scored zero
+    overlap between "refrigerators" and every title's "Refrigerator" - the real
+    matches scored 0.003-0.016 (buried under unrelated Samsung phone accessories)
+    at alpha 0.1, vs 0.97-0.99 for the identical query at alpha 0.8. See
+    `alpha_router.py`'s `classify()` for the full account, including the golden-set
+    check proving no real identifier query relied on the removed rule."""
+    assert classify("hiking boots").query_class is QueryClass.ATTRIBUTE
 
 
 # --- routing ------------------------------------------------------------------

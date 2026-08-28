@@ -31,8 +31,10 @@ of scenario, built two different ways:
 
 **Cost, stated plainly**: unlike a retrieval query (free, local `hybrid()`
 call), each scenario here is a real, paid Bedrock call - agent -> tool call ->
-agent again, sometimes twice. At Haiku 4.5 / Sonnet 5 Bedrock pricing and the
-short messages here, ~220 scenarios is still well under a dollar - the real
+agent again, sometimes twice. Measured directly (2026-08-23, `LlmUsage` ledger,
+not estimated): a full 218-scenario run costs **~$1.65** across 455 calls
+(~1.32M input / ~48K output tokens) - a real number, corrected here after an
+earlier "well under a dollar" guess undershot it. Still small; the real
 cost of this scale is wall-clock (real sequential calls take tens of minutes,
 not per-query milliseconds like retrieval eval), not money.
 """

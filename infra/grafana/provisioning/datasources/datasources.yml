@@ -1,0 +1,34 @@
+# Auto-provisioned on Grafana startup - dashboards/alerts reference these by uid,
+# so the uids below are load-bearing, not cosmetic.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: catalogmind_prometheus
+    type: prometheus
+    access: proxy
+    # `prometheus` runs on host networking (infra/docker-compose.yml), so it has no
+    # bridge-network DNS name - reached via the host gateway instead.
+    url: http://host.docker.internal:9090
+    isDefault: true
+    editable: false
+
+  # Cost lives in Postgres (`llm_usage`, see app/models/db.py), not Prometheus - a
+  # per-call dollar ledger is a Postgres-shaped query, not a scrape-based metric (see
+  # app/obs/metrics.py's module docstring on why per-tenant/per-call figures don't
+  # belong in a Prometheus label). Same in-network credentials the `api` container
+  # already uses in docker-compose.yml - this stack's threat model is one developer's
+  # own machine, not a shared deployment (infra/helm is the actual production path).
+  - name: Postgres
+    uid: catalogmind_postgres
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    database: catalogmind
+    user: catalogmind
+    secureJsonData:
+      password: catalogmind
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1700
+    editable: false
